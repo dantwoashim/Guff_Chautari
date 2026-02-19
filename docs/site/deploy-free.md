@@ -38,3 +38,9 @@ Optional:
 - App loads and routing works (SPA fallback handled by `wrangler.jsonc` asset config).
 - Login and chat load correctly.
 - BYOK key can be added in app settings.
+
+## Wrangler static-assets note
+If deploying with `npx wrangler deploy` using `assets.directory`:
+- Do not add runtime Worker `Variables/Secrets`.
+- Cloudflare rejects bindings for static-assets-only Workers.
+- Provide `VITE_*` values as build-time variables (Build settings), not Worker runtime bindings.
