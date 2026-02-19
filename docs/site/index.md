@@ -16,6 +16,7 @@ This documentation set is prepared for final-year project submission and mainten
 ## Quick Navigation
 - Setup guide: `./setup.md`
 - Self-host overview: `./self-hosting.md`
+- Free deployment: `./deploy-free.md`
 - API overview: `./api-reference.md`
 - Persona creation: `./persona-creation.md`
 - Plugin SDK guide: `./plugin-sdk.md`

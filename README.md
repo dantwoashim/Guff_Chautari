@@ -59,6 +59,14 @@ npm run deploy:up
 
 Self-host guide: `docs/self-host-guide.md`
 
+## Free Cloud Deployment
+Use free tiers:
+- GitHub (code hosting)
+- Cloudflare Pages (frontend hosting)
+- Supabase free tier (backend/auth)
+
+Step-by-step guide: `docs/site/deploy-free.md`
+
 ## Quality Gates
 ```bash
 npm run lint
