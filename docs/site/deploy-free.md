@@ -35,6 +35,6 @@ Optional:
 - After build succeeds, open your `*.pages.dev` URL.
 
 ## 5. Verify
-- App loads and routing works (SPA fallback handled by `public/_redirects`).
+- App loads and routing works (SPA fallback handled by `wrangler.jsonc` asset config).
 - Login and chat load correctly.
 - BYOK key can be added in app settings.
