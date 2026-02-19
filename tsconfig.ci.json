@@ -1,0 +1,25 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "types.ts",
+    "vitest.config.ts",
+    "vitest.setup.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "docs",
+    "components/**",
+    "hooks/**",
+    "services/**",
+    "engines/**",
+    "modals/**",
+    "styles/**",
+    "App.tsx",
+    "ViewContainer.tsx",
+    "VoiceContinuum.tsx",
+    "index.tsx"
+  ]
+}

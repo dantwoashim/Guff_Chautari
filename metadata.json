@@ -1,0 +1,8 @@
+{
+  "name": "Ashim2",
+  "description": "A pristine, minimalist chat interface powered by ASI. Features voice-to-voice interaction, multimodal capabilities, and a refined aesthetic.",
+  "requestFramePermissions": [
+    "microphone",
+    "camera"
+  ]
+}

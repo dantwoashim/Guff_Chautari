@@ -1,0 +1,12 @@
+*
+!src/**
+!package.json
+!eslint.config.js
+!vitest.config.ts
+!vitest.setup.ts
+!.prettierrc.json
+!.prettierignore
+!tailwind.config.cjs
+!postcss.config.cjs
+!docs/rls-audit-week2.md
+!supabase/migrations/20260213_week2_rls_hardening.sql

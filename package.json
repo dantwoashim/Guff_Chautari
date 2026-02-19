@@ -1,0 +1,73 @@
+{
+  "name": "ashim2",
+  "private": true,
+  "version": "4.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint .",
+    "lint:db-boundary": "bash -c 'if rg -n -U \"supabase\\\\s*(\\\\n\\\\s*)?\\\\.from\\\\(\" App.tsx hooks components services src lib --glob \"!src/data/**\" --glob \"!lib/supabase.ts\"; then echo \"Direct supabase.from() is forbidden outside src/data and lib/supabase.ts.\"; exit 1; else echo \"DB boundary check passed.\"; fi'",
+    "typecheck": "tsc --noEmit -p tsconfig.ci.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test -c e2e/playwright.config.ts",
+    "test:plugin": "vitest run src/plugins/__tests__/conformance.test.ts src/plugins/__tests__/runtime.test.ts",
+    "benchmark": "vitest run src/benchmark/__tests__/runner.test.ts",
+    "benchmark:publish": "node scripts/publish-weekly-benchmarks.mjs",
+    "benchmark:regression": "node scripts/check-benchmark-regression.mjs",
+    "build:engine": "npm --prefix packages/engine run build",
+    "perf:budget": "node scripts/check-performance-budget.mjs",
+    "deploy:preflight": "bash scripts/predeploy-check.sh",
+    "deploy:up": "docker compose --env-file .env.self-host up -d --build",
+    "deploy:down": "docker compose --env-file .env.self-host down",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "ci": "npm run lint && npm run lint:db-boundary && npm run typecheck && npm run test:coverage && npm run build && npm run perf:budget && npm run benchmark && npm run benchmark:regression && npm run test:plugin",
+    "prepare": "husky"
+  },
+  "dependencies": {
+    "@google/genai": "^1.34.0",
+    "@supabase/supabase-js": "^2.89.0",
+    "ajv": "^8.17.1",
+    "lucide-react": "^0.562.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "uuid": "^13.0.0",
+    "yaml": "^2.8.2",
+    "zustand": "^5.0.11"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/node": "^22.14.0",
+    "@typescript-eslint/eslint-plugin": "^8.55.0",
+    "@typescript-eslint/parser": "^8.55.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "@vitest/coverage-v8": "^4.0.18",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^9.39.2",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "husky": "^9.1.7",
+    "jsdom": "^28.0.0",
+    "lint-staged": "^16.2.7",
+    "postcss": "^8.4.49",
+    "prettier": "^3.8.1",
+    "tailwindcss": "^3.4.17",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0",
+    "vitest": "^4.0.18"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx,json,md,yml,yaml,cjs,mjs}": [
+      "prettier --write"
+    ],
+    "*.{ts,tsx}": [
+      "eslint --fix"
+    ]
+  }
+}

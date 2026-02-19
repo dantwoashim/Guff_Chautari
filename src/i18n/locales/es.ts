@@ -1,0 +1,56 @@
+import type { TranslationBundle } from '../types';
+
+export const esBundle: TranslationBundle = {
+  locale: 'es',
+  messages: {
+    'app.install.prompt': 'Instala Ashim para un inicio mas rapido y soporte sin conexion.',
+    'app.install.action': 'Instalar',
+    'app.dismiss': 'Cerrar',
+    'app.offline.offline_queue':
+      'Modo sin conexion activo. {count} mensaje{countSuffix} en cola se enviara al reconectar.',
+    'app.offline.reconnected_queue':
+      'Reconectado. {count} mensaje{countSuffix} en cola pendiente de envio.',
+    'app.degraded.banner':
+      'Modo degradado: leer conversaciones y personas existentes sigue disponible.',
+    'app.degraded.offline_suffix': ' Las respuestas se pausan hasta recuperar la conexion.',
+    'app.degraded.byok_suffix':
+      ' Rota o revalida tu clave de Gemini para reanudar respuestas del modelo.',
+    'app.mode.label': 'Modo: {mode}',
+    'app.mode.switch': 'Cambiar modo',
+    'verticalPicker.title': 'Selector de Vertical',
+    'verticalPicker.description':
+      'Activa un paquete de dominio para preconfigurar persona, flujos, conocimiento y decisiones.',
+    'verticalPicker.active': 'Activo',
+    'verticalPicker.inactive': 'Inactivo',
+    'verticalPicker.activate': 'Activar Vertical',
+    'verticalPicker.reapply': 'Reaplicar Vertical',
+    'verticalPicker.metrics.workflows': '{count} flujo(s)',
+    'verticalPicker.metrics.knowledge_templates': '{count} plantilla(s) de conocimiento',
+    'verticalPicker.metrics.decision_presets': '{count} preset(s) de decision',
+    'verticalPicker.metrics.panels': '{count} panel(es)',
+    'localePicker.title': 'Idioma y Region',
+    'localePicker.description': 'Configura el idioma y el comportamiento regional del espacio.',
+    'localePicker.current': 'Idioma actual',
+    'localePicker.auto_detect': 'Idioma detectado del navegador',
+    'localePicker.workspace_override': 'Forzar idioma del espacio',
+    'localePicker.clear_override': 'Quitar forzado del espacio',
+    'localePicker.preview': 'Vista previa',
+    'localePicker.direction': 'Direccion del texto',
+    'localePicker.direction.ltr': 'Izquierda a derecha (LTR)',
+    'localePicker.direction.rtl': 'Derecha a izquierda (RTL)',
+    'locale.en': 'Ingles',
+    'locale.es': 'Espanol',
+    'locale.hi': 'Hindi',
+    'locale.ja': 'Japones',
+    'locale.ar': 'Arabe',
+    'offlineQueue.title': 'Cola sin conexion',
+    'offlineQueue.description': 'Revisa mensajes en cola y reprioriza el orden de envio.',
+    'offlineQueue.empty': 'No hay mensajes en cola.',
+    'offlineQueue.priority.high': 'Alta',
+    'offlineQueue.priority.normal': 'Normal',
+    'offlineQueue.priority.low': 'Baja',
+    'offlineQueue.status.online': 'En linea',
+    'offlineQueue.status.offline': 'Sin conexion',
+    'shadow.reasoning': 'Mostrar razonamiento',
+  },
+};

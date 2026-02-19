@@ -1,0 +1,12 @@
+{
+  "name": "@ashim/widget",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/embed.ts",
+  "module": "src/embed.ts",
+  "types": "src/embed.ts",
+  "scripts": {
+    "build": "echo \"Widget package is source-only in this workspace.\""
+  }
+}

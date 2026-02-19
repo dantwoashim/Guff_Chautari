@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: DB Boundary Lint
+        run: npm run lint:db-boundary
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit Tests (Coverage)
+        run: npm run test:coverage
+
+      - name: Build
+        run: npm run build
+
+      - name: Performance Budget
+        run: npm run perf:budget
+
+      - name: Benchmark Suite
+        run: npm run benchmark
+
+      - name: Benchmark Regression Guard
+        run: npm run benchmark:regression
+
+      - name: Plugin Conformance
+        run: npm run test:plugin

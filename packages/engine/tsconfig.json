@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "baseUrl": "../../"
+  },
+  "include": [
+    "src/**/*.ts",
+    "data/**/*.ts",
+    "providers/**/*.ts",
+    "../types.ts",
+    "../../types.ts"
+  ],
+  "exclude": [
+    "../../node_modules",
+    "../../dist"
+  ]
+}

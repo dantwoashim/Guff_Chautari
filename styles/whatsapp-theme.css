@@ -1,0 +1,231 @@
+:root {
+  /* WhatsApp Web Dark Mode Palette */
+  --wa-bg-app: #111b21;
+  --wa-bg-panel: #202c33;
+  --wa-bg-header: #202c33;
+  --wa-bg-chat: #0b141a;
+  --wa-bg-input: #2a3942;
+  
+  --wa-border: #313d45;
+  --wa-border-light: rgba(134, 150, 160, 0.15);
+  
+  --wa-primary: #00a884;
+  --wa-primary-hover: #008f72;
+  
+  --wa-text-main: #e9edef;
+  --wa-text-secondary: #8696a0;
+  --wa-text-meta: #667781;
+  
+  --wa-bubble-out: #005c4b;
+  --wa-bubble-in: #202c33;
+  
+  --wa-hover: #2a3942;
+  --wa-active: #233138;
+}
+
+.wa-dark {
+  background-color: var(--wa-bg-app);
+  color: var(--wa-text-main);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* Scrollbar */
+.wa-scroll::-webkit-scrollbar {
+  width: 6px !important;
+  height: 6px !important;
+}
+.wa-scroll::-webkit-scrollbar-thumb {
+  background-color: rgba(134, 150, 160, 0.3) !important;
+  border-radius: 3px !important;
+}
+.wa-scroll::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+
+/* Chat Background */
+.wa-chat-bg {
+  background-color: var(--wa-bg-chat);
+  background-image: url("https://static.whatsapp.net/rsrc.php/v3/yl/r/gi_Dck4u5p8.png");
+  background-repeat: repeat;
+  opacity: 1;
+}
+
+/* Message Bubbles */
+.wa-bubble {
+  position: relative;
+  border-radius: 7.5px;
+  box-shadow: 0 1px 0.5px rgba(0,0,0,0.13);
+  font-size: 14.2px;
+  line-height: 19px;
+  color: var(--wa-text-main);
+  padding: 6px 7px 8px 9px;
+  max-width: 65%;
+  word-wrap: break-word;
+}
+
+.wa-bubble-in {
+  background-color: var(--wa-bg-panel);
+  border-top-left-radius: 0;
+}
+
+.wa-bubble-out {
+  background-color: var(--wa-bubble-out);
+  border-top-right-radius: 0;
+}
+
+/* Tail SVGs */
+.wa-tail-in {
+  position: absolute;
+  top: 0;
+  left: -8px;
+  width: 8px;
+  height: 13px;
+  fill: var(--wa-bg-panel);
+}
+
+.wa-tail-out {
+  position: absolute;
+  top: 0;
+  right: -8px;
+  width: 8px;
+  height: 13px;
+  fill: var(--wa-bubble-out);
+}
+
+/* Input Area */
+.wa-input-wrapper {
+  background-color: var(--wa-bg-input);
+  border-radius: 8px;
+  padding: 9px 12px;
+  display: flex;
+  align-items: flex-end;
+  min-height: 42px;
+}
+
+.wa-input {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--wa-text-main);
+  font-size: 15px;
+  line-height: 20px;
+  max-height: 100px;
+  outline: none;
+  resize: none;
+  font-family: inherit;
+}
+
+.wa-input::placeholder {
+  color: var(--wa-text-secondary);
+}
+
+/* ============================================
+   ENHANCED UI POLISH - Added by AI Studio
+   ============================================ */
+/* --- CONVERSATION LIST POLISH --- */
+.wa-conversation-item {
+    position: relative;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    border-radius: 8px;
+    margin: 2px 8px;
+}
+.wa-conversation-item:hover {
+    background: linear-gradient(90deg, rgba(42, 57, 66, 0.8) 0%, rgba(42, 57, 66, 0.4) 100%);
+    transform: translateX(3px);
+}
+.wa-conversation-item:active {
+    transform: scale(0.98);
+}
+.wa-conversation-item.selected {
+    background: linear-gradient(90deg, #2a3942 0%, rgba(42, 57, 66, 0.6) 100%);
+    border-left: 3px solid var(--wa-primary);
+}
+.wa-conversation-item.unread::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 3px;
+    height: 60%;
+    background: var(--wa-primary);
+    border-radius: 0 3px 3px 0;
+    box-shadow: 0 0 8px rgba(0, 168, 132, 0.5);
+}
+/* --- MESSAGE BUBBLES POLISH --- */
+.wa-bubble {
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+    transition: transform 0.1s ease, box-shadow 0.2s ease;
+}
+.wa-bubble:hover {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+.wa-bubble-in {
+    background: linear-gradient(135deg, #202c33 0%, #1e2930 100%);
+}
+.wa-bubble-out {
+    background: linear-gradient(135deg, #005c4b 0%, #004d40 100%);
+}
+/* --- INPUT AREA POLISH --- */
+.wa-input-area {
+    background: rgba(32, 44, 51, 0.95);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-top: 1px solid rgba(49, 61, 69, 0.5);
+}
+.wa-input-wrapper {
+    transition: all 0.2s ease;
+    border: 1px solid transparent;
+}
+.wa-input-wrapper:focus-within {
+    border-color: rgba(0, 168, 132, 0.3);
+    box-shadow: 0 0 0 2px rgba(0, 168, 132, 0.1);
+}
+/* --- HEADER POLISH --- */
+.wa-header {
+    background: linear-gradient(180deg, #202c33 0%, rgba(32, 44, 51, 0.98) 100%);
+    backdrop-filter: blur(8px);
+}
+/* --- ANIMATIONS --- */
+@keyframes slide-up {
+    from { transform: translateY(10px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+@keyframes scale-in {
+    from { transform: scale(0.95); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+}
+.animate-slide-up { animation: slide-up 0.3s ease-out; }
+.animate-scale-in { animation: scale-in 0.2s ease-out; }
+/* --- LOADING SKELETON --- */
+.skeleton {
+    background: linear-gradient(90deg, rgba(42, 57, 66, 0.5) 0%, rgba(42, 57, 66, 0.8) 50%, rgba(42, 57, 66, 0.5) 100%);
+    background-size: 200% 100%;
+    animation: skeleton-shimmer 1.5s infinite;
+}
+@keyframes skeleton-shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+}
+/* --- SCROLLBAR --- */
+.wa-scroll::-webkit-scrollbar { width: 6px; }
+.wa-scroll::-webkit-scrollbar-track { background: transparent; }
+.wa-scroll::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, rgba(134, 150, 160, 0.4) 0%, rgba(134, 150, 160, 0.2) 100%);
+    border-radius: 3px;
+}
+.wa-scroll::-webkit-scrollbar-thumb:hover { background: rgba(134, 150, 160, 0.6); }
+
+/* RTL layout support */
+body.ashim-rtl {
+  direction: rtl;
+}
+
+body.ashim-rtl .ashim-shell-body {
+  direction: rtl;
+}
+
+body.ashim-rtl .ashim-shell-body .border-r {
+  border-right-width: 0;
+  border-left-width: 1px;
+}

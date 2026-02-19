@@ -1,0 +1,33 @@
+import { StateCreator } from 'zustand';
+import { AppStore, UiSlice } from '../types';
+
+export const createUiSlice: StateCreator<AppStore, [], [], UiSlice> = (set) => ({
+  isSidebarOpen: false,
+  isSettingsOpen: false,
+  isNewChatModalOpen: false,
+  isSessionModalOpen: false,
+  deleteModalState: { isOpen: false, chatId: null },
+  showSqlSetup: false,
+  isDarkMode: true,
+  isFullscreen: false,
+  currentView: 'chat',
+  navView: 'chat',
+  searchTerm: '',
+  mobileView: 'list',
+  isChatListOpen: true,
+  isAdminOpen: false,
+  setIsSidebarOpen: (isSidebarOpen) => set({ isSidebarOpen }),
+  setIsSettingsOpen: (isSettingsOpen) => set({ isSettingsOpen }),
+  setIsNewChatModalOpen: (isNewChatModalOpen) => set({ isNewChatModalOpen }),
+  setIsSessionModalOpen: (isSessionModalOpen) => set({ isSessionModalOpen }),
+  setDeleteModalState: (deleteModalState) => set({ deleteModalState }),
+  setShowSqlSetup: (showSqlSetup) => set({ showSqlSetup }),
+  setIsDarkMode: (isDarkMode) => set({ isDarkMode }),
+  setIsFullscreen: (isFullscreen) => set({ isFullscreen }),
+  setCurrentView: (currentView) => set({ currentView }),
+  setNavView: (navView) => set({ navView }),
+  setSearchTerm: (searchTerm) => set({ searchTerm }),
+  setMobileView: (mobileView) => set({ mobileView }),
+  setIsChatListOpen: (isChatListOpen) => set({ isChatListOpen }),
+  setIsAdminOpen: (isAdminOpen) => set({ isAdminOpen }),
+});
