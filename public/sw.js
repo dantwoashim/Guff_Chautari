@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v2';
 const APP_SHELL_CACHE = `ashim-app-shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `ashim-runtime-${CACHE_VERSION}`;
 
@@ -39,6 +39,19 @@ const isStaticAsset = (request) => {
   return ['style', 'script', 'font', 'image'].includes(request.destination);
 };
 
+const putInRuntimeCache = async (request, response) => {
+  if (!response || !response.ok) {
+    return;
+  }
+
+  try {
+    const cache = await caches.open(RUNTIME_CACHE);
+    await cache.put(request, response.clone());
+  } catch (_error) {
+    // Skip cache writes when cloning fails (e.g. already-consumed/locked body).
+  }
+};
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
 
@@ -54,9 +67,8 @@ self.addEventListener('fetch', (event) => {
   if (request.mode === 'navigate') {
     event.respondWith(
       fetch(request)
-        .then((response) => {
-          const responseClone = response.clone();
-          caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, responseClone));
+        .then(async (response) => {
+          await putInRuntimeCache(request, response);
           return response;
         })
         .catch(async () => {
@@ -73,8 +85,8 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       caches.match(request).then(async (cached) => {
         const networkFetch = fetch(request)
-          .then((response) => {
-            caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, response.clone()));
+          .then(async (response) => {
+            await putInRuntimeCache(request, response);
             return response;
           })
           .catch(() => cached || Response.error());

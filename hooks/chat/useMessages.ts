@@ -4,10 +4,13 @@ import { Message } from '../../types';
 import { useAppStore } from '../../src/store';
 import { messageRepository } from '../../src/data/repositories';
 
+const EMPTY_MESSAGES: Message[] = [];
+
 export const useMessages = (activeThreadId: string | null) => {
-  const messages = useAppStore((state) =>
-    activeThreadId ? state.messagesByThread[activeThreadId] || [] : []
-  );
+  const messages = useAppStore((state) => {
+    if (!activeThreadId) return EMPTY_MESSAGES;
+    return state.messagesByThread[activeThreadId] ?? EMPTY_MESSAGES;
+  });
   const setThreadMessages = useAppStore((state) => state.setThreadMessages);
   const appendThreadMessage = useAppStore((state) => state.appendThreadMessage);
   const updateThreadMessageInStore = useAppStore((state) => state.updateThreadMessage);
