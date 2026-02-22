@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { X, MessageSquare, Calendar, ChevronRight } from '../Icons';
+import { supabase } from '../../lib/supabase';
 import { Conversation, Persona } from '../../types';
-import { conversationRepository } from '../../src/data/repositories';
 
 interface ConversationHistoryPanelProps {
     isOpen: boolean;
@@ -39,12 +39,15 @@ const ConversationHistoryPanel: React.FC<ConversationHistoryPanelProps> = ({
 
         const fetchConversations = async () => {
             setIsLoading(true);
-            try {
-                const data = await conversationRepository.listByUserAndPersona(userId, personaId);
+            const { data, error } = await supabase
+                .from('conversations')
+                .select('*')
+                .eq('user_id', userId)
+                .eq('persona_id', personaId)
+                .order('last_message_at', { ascending: false });
+
+            if (!error && data) {
                 setConversations(data);
-            } catch (error) {
-                console.error('Failed to load conversation history:', error);
-                setConversations([]);
             }
             setIsLoading(false);
         };

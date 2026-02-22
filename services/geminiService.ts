@@ -1,13 +1,5 @@
 
-import {
-
-    GoogleGenAI,
-    Chat,
-    Type,
-    HarmBlockThreshold,
-    HarmCategory,
-    FunctionCallingConfigMode
-} from "@google/genai";
+import { GoogleGenAI, Chat, Type, HarmBlockThreshold, HarmCategory } from "@google/genai";
 import { supabase } from '../lib/supabase';
 import { modelManager } from './modelManager';
 import {
@@ -20,8 +12,6 @@ import { v4 as uuidv4 } from 'uuid';
 import { fetchReferenceImages as fetchPersonaReferenceImages } from './adminService';
 import { getTimeContext, generateTimePromptInjection } from './timeContextService';
 import { calculatePhysicalState, getPhysicalContext } from './physicalStateEngine';
-
-const supabaseDb = supabase;
 // Phase 1 Integration: Token Savings & Human-like Responses
 import { checkCache, CacheResult } from './responseCache';
 import { addImperfections, IMPERFECTION_PRESETS } from './imperfectionEngine';
@@ -39,8 +29,6 @@ import {
     getCacheName,
     hasActiveCache
 } from './personaCache';
-import { getRuntimeGeminiKey } from '../src/byok/runtimeKey';
-import { recordGeminiRequest } from '../src/byok/usageStats';
 
 // CPR: Contextual Persona Retrieval (for 10,000+ word personas)
 import {
@@ -62,24 +50,8 @@ const conversationStateCache = new Map<string, ConversationState>();
 // Threshold for using CPR vs differential (chars)
 const CPR_THRESHOLD = 50000; // [EMERGENCY FIX] Increased to effectively disable CPR for now
 
-const ensureGeminiRuntimeKey = async (): Promise<string | null> => {
-    const runtimeKey = getRuntimeGeminiKey()?.trim();
-    if (runtimeKey) {
-        return runtimeKey;
-    }
-
-    const { BYOKKeyManager } = await import('../src/byok/keyManager');
-    const decrypted = await BYOKKeyManager.getDecryptedKey('gemini');
-    return decrypted?.trim() || null;
-};
-
-const getAiClient = (resolvedApiKey?: string | null) => {
-    const runtimeKey = resolvedApiKey || getRuntimeGeminiKey();
-    const apiKey = runtimeKey?.trim() || '';
-    if (!apiKey) {
-        throw new Error('BYOK Gemini key is missing. Open BYOK setup and validate your key.');
-    }
-    recordGeminiRequest();
+const getAiClient = () => {
+    const apiKey = (typeof process !== 'undefined' && process.env) ? process.env.API_KEY : '';
     return new GoogleGenAI({ apiKey: apiKey || '' });
 };
 
@@ -119,8 +91,7 @@ export const createChatSession = async (
     history: Content[],
     inferredPersona?: InferredPersona
 ): Promise<Chat> => {
-    const apiKey = await ensureGeminiRuntimeKey();
-    const ai = getAiClient(apiKey);
+    const ai = getAiClient();
     // Use the model from config, fallback to pro if not set
     const modelName = config.model || 'gemini-3-pro-preview';
 
@@ -308,7 +279,7 @@ Any forbidden pattern = character break = failure.
         config: {
             systemInstruction: finalSystemInstruction,
             tools,
-            toolConfig: { functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO } }, // Explicitly allow auto function calling
+            toolConfig: { functionCallingConfig: { mode: 'AUTO' } }, // Explicitly allow auto function calling
             temperature: temperature,
             thinkingConfig,
             safetySettings: [
@@ -405,8 +376,7 @@ export const generateWithExplicitCache = async (
     userMessage: string,
     onChunk?: (text: string) => void
 ): Promise<{ text: string; fromCache: boolean; tokensSaved: number }> => {
-    const apiKey = await ensureGeminiRuntimeKey();
-    const ai = getAiClient(apiKey);
+    const ai = getAiClient();
     const modelName = config.model || 'gemini-2.0-flash';
     const personaId = config.livingPersona?.id || 'default';
     const fullPersonaPrompt = config.livingPersona?.compiledPrompt || config.systemInstruction || '';
@@ -566,17 +536,17 @@ export const sendMessageStream = async (
             // For @google/genai SDK chat.sendMessageStream, pass parts directly
             // The 'message' param accepts string OR Part[] (ContentUnion)
             console.log(`[Gemini] Sending multimodal message with ${messageContent.length} parts`);
-            result = await chat.sendMessageStream({
-                message: messageContent, // Pass parts array directly as message
-                config: { abortSignal: signal }
-            });
+            result = await chat.sendMessageStream(
+                { message: messageContent },  // Pass parts array directly as message
+                { signal }
+            );
         } else {
             // Text-only: use original simple format that was working
             console.log(`[Gemini] Sending text-only message`);
-            result = await chat.sendMessageStream({
-                message,
-                config: { abortSignal: signal }
-            });
+            result = await chat.sendMessageStream(
+                { message },
+                { signal }
+            );
         }
 
         let toolCallDetected = false;
@@ -743,8 +713,7 @@ export const sendMessageStream = async (
 
 export const transcribeAudio = async (base64Audio: string, mimeType: string): Promise<string> => {
     try {
-        const apiKey = await ensureGeminiRuntimeKey();
-        const ai = getAiClient(apiKey);
+        const ai = getAiClient();
         const response = await ai.models.generateContent({
             model: 'gemini-2.0-flash',  // Audio input enabled model
             contents: [{
@@ -797,23 +766,23 @@ export const fetchLibraryFiles = async (bucket: string, userId?: string): Promis
 };
 
 export const fetchPresets = async (userId: string): Promise<InstructionPreset[]> => {
-    const { data } = await supabaseDb.from('instruction_presets').select('*').eq('user_id', userId);
+    const { data } = await supabase.from('instruction_presets').select('*').eq('user_id', userId);
     return data || [];
 };
 
 export const savePreset = async (userId: string, name: string, content: string): Promise<InstructionPreset | null> => {
-    const { data, error } = await supabaseDb.from('instruction_presets').insert({ user_id: userId, name, content }).select().single();
+    const { data, error } = await supabase.from('instruction_presets').insert({ user_id: userId, name, content }).select().single();
     if (error) return null;
     return data;
 };
 
 export const deletePreset = async (id: string): Promise<void> => {
-    await supabaseDb.from('instruction_presets').delete().eq('id', id);
+    await supabase.from('instruction_presets').delete().eq('id', id);
 };
 
 export const fetchPersonas = async (userId: string): Promise<Persona[]> => {
     // Fetch both: global personas (is_global=true, is_active=true) AND user's own personas
-    const { data, error } = await supabaseDb
+    const { data, error } = await supabase
         .from('personas')
         .select('*')
         .or(`is_global.eq.true,user_id.eq.${userId}`)
@@ -829,7 +798,7 @@ export const fetchPersonas = async (userId: string): Promise<Persona[]> => {
 };
 
 export const createPersona = async (userId: string, name: string, instruction: string, description: string, avatarUrl?: string): Promise<Persona | null> => {
-    const { data, error } = await supabaseDb.from('personas').insert({
+    const { data, error } = await supabase.from('personas').insert({
         user_id: userId,
         name,
         system_instruction: instruction,
@@ -841,7 +810,7 @@ export const createPersona = async (userId: string, name: string, instruction: s
 };
 
 export const deletePersona = async (id: string): Promise<void> => {
-    await supabaseDb.from('personas').delete().eq('id', id);
+    await supabase.from('personas').delete().eq('id', id);
 };
 
 export const analyzeVoiceCharacteristics = async (samples: { data: string, mimeType: string }[]): Promise<any> => {

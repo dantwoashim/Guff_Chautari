@@ -11,11 +11,10 @@ import {
 } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import { getTimeContext, generateTimePromptInjection } from './timeContextService';
-import { resolveGeminiApiKey } from '../lib/env';
 
 // Safe lazy initialization
 const getAiClient = () => {
-  const apiKey = resolveGeminiApiKey();
+  const apiKey = (typeof process !== 'undefined' && process.env) ? process.env.API_KEY : '';
   return new GoogleGenAI({ apiKey: apiKey || '' });
 };
 

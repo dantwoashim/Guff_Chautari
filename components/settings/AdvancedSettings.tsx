@@ -1,9 +1,7 @@
 
-import React, { useState } from 'react';
+import React from 'react';
 import { Cpu, Zap, Activity, Thermometer, Brain, Image } from '../Icons';
 import { ChatConfig } from '../../types';
-import { i18nRuntime } from '../../src/i18n';
-import { isShadowModeEnabled, setShadowModeEnabled } from '../../src/observability/shadowMode';
 
 interface AdvancedSettingsProps {
   config: ChatConfig;
@@ -22,7 +20,6 @@ const IMAGE_MODELS = [
 ];
 
 const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, setConfig }) => {
-  const [shadowEnabled, setShadowEnabled] = useState(() => isShadowModeEnabled());
   
   // Helper to determine text description for Temperature
   const getTempLabel = (val: number) => {
@@ -206,39 +203,6 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, setConfig }
         </div>
       </div>
 
-      {/* 4. Shadow mode toggle */}
-      <div className="space-y-3 pt-2">
-        <div className="flex items-center gap-2 mb-2">
-          <Activity size={16} className="text-[#7ed0f3]" />
-          <h3 className="text-[12px] font-semibold uppercase tracking-wider text-muted">
-            Observability
-          </h3>
-        </div>
-        <div className="bg-surface/40 rounded-3xl p-5 border border-stroke/60 flex items-center justify-between">
-          <div>
-            <p className="text-[13px] font-semibold text-ink">{i18nRuntime.t('shadow.reasoning')}</p>
-            <p className="text-[11px] text-muted">
-              Adds a collapsible trace under assistant messages showing key pipeline stages.
-            </p>
-          </div>
-          <button
-            type="button"
-            className={`rounded border px-3 py-1.5 text-xs font-semibold ${
-              shadowEnabled
-                ? 'border-[#00a884] bg-[#123b34] text-[#dffaf3]'
-                : 'border-stroke/60 text-muted'
-            }`}
-            onClick={() => {
-              const next = !shadowEnabled;
-              setShadowModeEnabled(next);
-              setShadowEnabled(next);
-            }}
-          >
-            {shadowEnabled ? 'Enabled' : 'Disabled'}
-          </button>
-        </div>
-      </div>
-
       {/* Debug Info */}
       <div className="pt-6 border-t border-stroke/70 opacity-60">
         <div className="flex items-center gap-2 mb-2">
@@ -249,7 +213,7 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ config, setConfig }
         </div>
         <div className="text-[11px] font-mono text-muted space-y-1 bg-surface/30 p-3 rounded-xl border border-stroke/50">
           <p>Active Model: {config.model}</p>
-          <p>Image Model: {config.imageModel || 'Default (Nano Banana)'}</p>
+          <p>Image Model: {config.imageModel || 'Default'}</p>
           <p>Persona ID: {config.livingPersona ? config.livingPersona.id.slice(0,8) : 'N/A'}</p>
           <p>Budget: {config.thinkingBudget} | Temp: {config.temperature}</p>
         </div>

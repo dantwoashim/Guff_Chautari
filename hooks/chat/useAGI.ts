@@ -1,5 +1,6 @@
 
 import { useState, useEffect, useCallback } from 'react';
+import { supabase } from '../../lib/supabase';
 import {
     AGIConsciousnessState,
     initializeConsciousness,
@@ -9,7 +10,6 @@ import {
 import { LivingPersonaInstance, initializeLivingPersona } from '../../services/livingPersona';
 import { saveRelationshipState, loadRelationshipState } from '../../services/relationshipPersistence';
 import { ChatConfig } from '../../types';
-import { personaRepository } from '../../src/data/repositories';
 
 export const useAGI = (
     session: any,
@@ -55,7 +55,12 @@ export const useAGI = (
             // FIXED: Try to load pre-processed states from personas table first
             let preProcessedData: any = null;
             if (personaId && personaId !== currentSessionId) {
-                const personaData = await personaRepository.getPreprocessedAgiData(personaId);
+                const { data: personaData } = await supabase
+                    .from('personas')
+                    .select('agi_state, quantum_state, meta_state, temporal_state, life_context, social_graph_data, gossip_seeds')
+                    .eq('id', personaId)
+                    .maybeSingle();
+
                 if (personaData) {
                     preProcessedData = personaData;
                     console.log('[AGI] Found pre-processed data in personas table');
@@ -101,29 +106,17 @@ export const useAGI = (
                     console.log('[AGI] Using pre-processed social graph');
                 }
                 // Priority 2: Config living_life (if populated by personaProcessor)
-                else {
-                    const livingLife = config.livingPersona?.living_life as Record<string, unknown> | undefined;
-                    const socialCircle = (livingLife?.social_circle ?? null) as Record<string, unknown> | null;
-                    const friendGroup = Array.isArray(socialCircle?.friend_group)
-                        ? socialCircle?.friend_group
-                        : null;
-
-                    if (friendGroup) {
+                else if (config.livingPersona?.living_life?.social_circle?.friend_group) {
                     personaProfile = {
-                        friends: friendGroup
-                            .map((friend) => {
-                                if (!friend || typeof friend !== 'object') return '';
-                                const name = (friend as { name?: unknown }).name;
-                                return typeof name === 'string' ? name : '';
-                            })
-                            .filter((name) => name.length > 0),
+                        friends: config.livingPersona.living_life.social_circle.friend_group.map((f: any) => f.name) || [],
                         familyMembers: ['mama', 'baba'],
                         interests: ['music', 'shows', 'fashion'],
                         subjects: [],
                         places: ['the mall', 'college', 'home']
                     };
-                    } else {
-                        // Priority 3: Default profile
+                }
+                // Priority 3: Default profile
+                else {
                     personaProfile = {
                         friends: ['friend1', 'friend2'],
                         familyMembers: ['mama', 'baba'],
@@ -131,7 +124,6 @@ export const useAGI = (
                         subjects: [],
                         places: ['the mall', 'college', 'home']
                     };
-                    }
                 }
 
                 // Try to load existing relationship state

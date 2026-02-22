@@ -1,5 +1,5 @@
-
 import React from 'react';
+import { Sparkles } from '../Icons';
 import { Persona } from '../../types';
 
 interface EmptyMessagesProps {
@@ -7,44 +7,35 @@ interface EmptyMessagesProps {
   onSendPrompt?: (prompt: string) => void;
 }
 
-const EmptyMessages: React.FC<EmptyMessagesProps> = ({ 
-  persona, 
-  onSendPrompt 
-}) => {
-  const suggestedPrompts = [
-      "Hello! 👋",
-      "How are you doing?",
-      "Tell me about yourself"
-  ];
+const EmptyMessages: React.FC<EmptyMessagesProps> = ({ persona, onSendPrompt }) => {
+  const prompts = ['What should we solve today?', 'Review my decision plan', 'Give me a strategic summary'];
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center p-8 bg-[#0b141a]/95 h-full animate-fade-in wa-chat-bg">
-      <div className="w-24 h-24 rounded-full overflow-hidden mb-4 bg-[#6a7175] flex items-center justify-center border-4 border-[#202c33] shadow-lg">
-        {persona.avatar_url ? (
-            <img src={persona.avatar_url} alt={persona.name} className="w-full h-full object-cover" />
-        ) : (
-            <span className="text-3xl text-[#cfd4d6]">{persona.name?.[0]}</span>
-        )}
-      </div>
-      
-      <h2 className="text-xl font-medium text-[#e9edef] mb-2">
-        {persona.name}
-      </h2>
-      
-      <p className="text-[#8696a0] text-center max-w-sm mb-8 text-sm leading-relaxed">
-        {persona.description || persona.status_text || 'Start a conversation'}
-      </p>
-      
-      <div className="flex flex-wrap gap-2 justify-center max-w-md">
-        {suggestedPrompts.map((prompt, i) => (
-          <button
-            key={i}
-            onClick={() => onSendPrompt?.(prompt)}
-            className="px-4 py-2 bg-[#202c33] border border-[#2a3942] rounded-full text-sm text-[#e9edef] hover:bg-[#2a3942] transition-colors shadow-sm"
-          >
-            {prompt}
-          </button>
-        ))}
+    <div className="h-full flex items-center justify-center p-8">
+      <div className="premium-panel max-w-xl w-full p-8 text-center">
+        <div className="w-16 h-16 mx-auto rounded-2xl border border-[color:var(--color-border)] bg-[color:rgba(22,44,70,0.85)] flex items-center justify-center text-[color:var(--color-accent)]">
+          <Sparkles size={26} />
+        </div>
+
+        <h2 className="mt-5 text-2xl font-semibold text-[color:var(--color-text)]">
+          {persona?.name || 'Ashim'}
+        </h2>
+
+        <p className="mt-2 text-sm text-[color:var(--color-text-muted)] leading-relaxed">
+          {persona?.description || persona?.status_text || 'Begin a high-context conversation from here.'}
+        </p>
+
+        <div className="mt-6 flex flex-wrap justify-center gap-2">
+          {prompts.map((prompt) => (
+            <button
+              key={prompt}
+              onClick={() => onSendPrompt?.(prompt)}
+              className="premium-chip"
+            >
+              {prompt}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

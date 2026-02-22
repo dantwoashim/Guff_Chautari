@@ -7,9 +7,8 @@
 import React, { useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { v4 as uuidv4 } from 'uuid';
-import { Message, ChatConfig, ChatSession } from '../types';
+import { Message, ChatConfig, ChatSession, AppViewId } from '../types';
 import { createChatSession, sendMessageStream, formatHistory } from '../services/geminiService';
-import { messageRepository } from '../src/data';
 import {
     initializeConsciousness,
     processInteraction as processAGI,
@@ -25,7 +24,7 @@ interface UseExternalMessageListenerProps {
     setSessions: React.Dispatch<React.SetStateAction<ChatSession[]>>;
     currentSessionId: string;
     isStreaming: boolean;
-    currentView?: string;
+    currentView?: AppViewId;
     localMessageIdsRef?: React.MutableRefObject<Set<string>>;
     setMessages?: React.Dispatch<React.SetStateAction<Message[]>>;
 }
@@ -261,7 +260,13 @@ export const useExternalMessageListener = ({
                             const isActiveSession = batchChatId === currentSessionIdRef.current;
 
                             // Fetch fresh history from DB to ensure we have context
-                            const freshAllMessages = await messageRepository.getMessages(batchChatId);
+                            const { data: freshData } = await supabase
+                                .from('chats')
+                                .select('messages')
+                                .eq('id', batchChatId)
+                                .single();
+
+                            const freshAllMessages = freshData?.messages || [];
 
                             // Filter out the batched messages from history to avoid duplication in prompt
                             const batchIds = new Set(batchMessages.map(m => m.id));
@@ -301,7 +306,14 @@ export const useExternalMessageListener = ({
 
         // 1. Mark all messages as read (DB & Local)
         // [SYNC] DB Update
-        await messageRepository.markUserMessagesRead(chatId, { touchUpdatedAt: false });
+        const { data: chatData } = await supabase.from('chats').select('messages').eq('id', chatId).single();
+        if (chatData?.messages) {
+            const batchIds = new Set(userMessages.map(m => m.id));
+            const updatedMessages = chatData.messages.map((m: Message) =>
+                batchIds.has(m.id) ? { ...m, status: 'read' } : m
+            );
+            await supabase.from('chats').update({ messages: updatedMessages }).eq('id', chatId);
+        }
 
         // [SYNC] Local UI - RACE FIX 3: Verify session ID
         if (isActiveSession && setMessages && chatId === currentSessionIdRef.current) {
@@ -482,9 +494,29 @@ export const useExternalMessageListener = ({
                             });
                         }
 
-                        // RACE FIX 2: Atomic DB Update using repository (RPC + fallback internally)
+                        // RACE FIX 2: Atomic DB Update using RPC
                         try {
-                            await messageRepository.upsertMessage(chatId, realMsg);
+                            const { error } = await supabase.rpc('append_chat_message', {
+                                p_chat_id: chatId,
+                                p_message: realMsg
+                            });
+
+                            if (error) {
+                                console.error("[ExternalListener] Atomic append failed:", error);
+                                // Fallback to standard update if RPC fails
+                                const { data: currentDbData } = await supabase
+                                    .from('chats')
+                                    .select('messages')
+                                    .eq('id', chatId)
+                                    .single();
+
+                                const newHistory = [...(currentDbData?.messages || []), realMsg];
+
+                                await supabase.from('chats').update({
+                                    messages: newHistory,
+                                    updated_at: new Date().toISOString()
+                                }).eq('id', chatId);
+                            }
                         } catch (e) {
                             console.error("[ExternalListener] DB Update Error:", e);
                         }

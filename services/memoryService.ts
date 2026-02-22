@@ -1,17 +1,13 @@
 
 import { GoogleGenAI } from "@google/genai";
 import { supabase } from "../lib/supabase";
-import { resolveGeminiApiKey } from "../lib/env";
 import { Memory, MemoryType, MemoryCluster, Message } from "../types";
 import { v4 as uuidv4 } from 'uuid';
 import { modelManager } from "./modelManager";
 
-const supabaseDb = supabase;
-
-
 // Safe lazy initialization
 const getAiClient = () => {
-    const apiKey = resolveGeminiApiKey();
+    const apiKey = (typeof process !== 'undefined' && process.env) ? process.env.API_KEY : '';
     return new GoogleGenAI({ apiKey: apiKey || '' });
 };
 
@@ -84,7 +80,7 @@ export async function getMemoriesByTier(
     }
 
     // Build base query
-    let queryBuilder = supabaseDb
+    let queryBuilder = supabase
         .from('memories')
         .select('*')
         .eq('user_id', userId)
@@ -92,8 +88,8 @@ export async function getMemoriesByTier(
 
     // Apply TTL filter (exclude expired memories)
     if (config.ttl !== Infinity) {
-        const cutoffIso = new Date(now - config.ttl).toISOString();
-        queryBuilder = queryBuilder.gte('created_at', cutoffIso);
+        const cutoff = now - config.ttl;
+        queryBuilder = queryBuilder.gte('created_at', cutoff);
     }
 
     // Apply tier-specific retrieval
@@ -193,9 +189,7 @@ export async function getOptimalMemories(
     return combined
         .map(m => ({
             ...m,
-            _score:
-                (((m as Memory & { _similarity?: number })._similarity) || 0.5) +
-                (1 - (now - m.timestamp) / (7 * 24 * 60 * 60 * 1000)) * 0.3
+            _score: (m._similarity || 0.5) + (1 - (now - m.timestamp) / (7 * 24 * 60 * 60 * 1000)) * 0.3
         }))
         .sort((a, b) => (b._score || 0) - (a._score || 0))
         .slice(0, totalLimit);
@@ -269,7 +263,7 @@ export const createMemory = async (
             metadata,
         };
 
-        const { data, error } = await supabaseDb
+        const { data, error } = await supabase
             .from('memories')
             .insert(newMemory)
             .select()
@@ -295,7 +289,7 @@ export const createMemory = async (
 };
 
 export const storeMemory = async (memory: Memory, userId: string): Promise<void> => {
-    const { error } = await supabaseDb.from('memories').upsert({
+    const { error } = await supabase.from('memories').upsert({
         id: memory.id,
         user_id: userId,
         content: memory.content,
@@ -310,11 +304,11 @@ export const storeMemory = async (memory: Memory, userId: string): Promise<void>
 };
 
 export const deleteMemory = async (id: string): Promise<void> => {
-    await supabaseDb.from('memories').delete().eq('id', id);
+    await supabase.from('memories').delete().eq('id', id);
 };
 
 export const updateMemoryDecay = async (id: string, factor: number): Promise<void> => {
-    await supabaseDb.from('memories').update({ decay_factor: factor }).eq('id', id);
+    await supabase.from('memories').update({ decay_factor: factor }).eq('id', id);
 };
 
 // ==========================================
@@ -366,17 +360,16 @@ export const searchMemories = async (
 };
 
 export const getRelatedMemories = async (memoryId: string): Promise<Memory[]> => {
-    const { data: source } = await supabaseDb.from('memories').select('connections').eq('id', memoryId).single();
+    const { data: source } = await supabase.from('memories').select('connections').eq('id', memoryId).single();
     if (!source || !source.connections || source.connections.length === 0) return [];
 
-    const { data } = await supabaseDb.from('memories').select('*').in('id', source.connections);
+    const { data } = await supabase.from('memories').select('*').in('id', source.connections);
 
     return (data || []).map((m: any) => ({
         id: m.id,
         type: m.type as MemoryType,
         content: m.content,
-        // Preserve embeddings so consolidation similarity scoring can work.
-        embedding: m.embedding || [],
+        embedding: [],
         timestamp: new Date(m.created_at).getTime(),
         decayFactor: m.decay_factor,
         connections: m.connections || [],
@@ -392,7 +385,7 @@ export const getRecentMemories = async (
 ): Promise<Memory[]> => {
     const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
 
-    let query = supabaseDb.from('memories').select('*')
+    let query = supabase.from('memories').select('*')
         .eq('user_id', userId)
         .gt('created_at', cutoff)
         .order('created_at', { ascending: false });
@@ -405,8 +398,7 @@ export const getRecentMemories = async (
         id: m.id,
         type: m.type as MemoryType,
         content: m.content,
-        // Preserve embeddings so downstream consolidation can compute similarity.
-        embedding: m.embedding || [],
+        embedding: [],
         timestamp: new Date(m.created_at).getTime(),
         decayFactor: m.decay_factor,
         connections: m.connections || [],
@@ -469,17 +461,17 @@ export const extractMemoryFromConversation = async (
 };
 
 export const connectMemories = async (id1: string, id2: string): Promise<void> => {
-    const { data: m1 } = await supabaseDb.from('memories').select('connections').eq('id', id1).single();
-    const { data: m2 } = await supabaseDb.from('memories').select('connections').eq('id', id2).single();
+    const { data: m1 } = await supabase.from('memories').select('connections').eq('id', id1).single();
+    const { data: m2 } = await supabase.from('memories').select('connections').eq('id', id2).single();
 
     if (m1 && m2) {
         const conn1 = new Set(m1.connections || []);
         conn1.add(id2);
-        await supabaseDb.from('memories').update({ connections: Array.from(conn1) }).eq('id', id1);
+        await supabase.from('memories').update({ connections: Array.from(conn1) }).eq('id', id1);
 
         const conn2 = new Set(m2.connections || []);
         conn2.add(id1);
-        await supabaseDb.from('memories').update({ connections: Array.from(conn2) }).eq('id', id2);
+        await supabase.from('memories').update({ connections: Array.from(conn2) }).eq('id', id2);
     }
 };
 
@@ -508,7 +500,7 @@ export const inferConnections = async (memoryId: string): Promise<string[]> => {
     const ai = getAiClient();
 
     // 1. Fetch source memory
-    const { data: sourceMemory, error } = await supabaseDb
+    const { data: sourceMemory, error } = await supabase
         .from('memories')
         .select('*')
         .eq('id', memoryId)
@@ -555,7 +547,7 @@ export const inferConnections = async (memoryId: string): Promise<string[]> => {
                 connectedIds.push(candidate.id);
                 // Create graph edge
                 await connectMemories(memoryId, candidate.id);
-                await supabaseDb.from('memory_connections').insert({
+                await supabase.from('memory_connections').insert({
                     memory_a: memoryId,
                     memory_b: candidate.id,
                     strength: 1.0
@@ -588,14 +580,9 @@ export const consolidateMemories = async (userId: string): Promise<void> => {
 
             if (similarity > 0.92) {
                 // Merge B into A
-                const mergedCount = Number(memA.metadata?.merged_count ?? 0);
-                const combinedMetadata = {
-                    ...memA.metadata,
-                    ...memB.metadata,
-                    merged_count: mergedCount + 1,
-                };
+                const combinedMetadata = { ...memA.metadata, ...memB.metadata, merged_count: ((memA.metadata?.merged_count || 0) + 1) };
 
-                await supabaseDb.from('memories').update({
+                await supabase.from('memories').update({
                     metadata: combinedMetadata,
                     decay_factor: 1.0, // Reset decay on merge
                     last_accessed: new Date().toISOString()
@@ -612,7 +599,7 @@ export const getMemoriesByEmotion = async (userId: string, valence: number, thre
     const minValence = valence - threshold;
     const maxValence = valence + threshold;
 
-    const { data, error } = await supabaseDb
+    const { data, error } = await supabase
         .from('memories')
         .select('*')
         .eq('user_id', userId)
@@ -643,7 +630,7 @@ export const buildTemporalContext = async (userId: string, sessionId: string): P
     const ai = getAiClient();
 
     // 1. Fetch relevant memories/events
-    const { data: memories } = await supabaseDb
+    const { data: memories } = await supabase
         .from('memories')
         .select('content, created_at')
         .eq('user_id', userId)

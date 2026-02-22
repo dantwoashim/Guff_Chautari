@@ -1,423 +1,391 @@
-
 /**
  * @file hooks/useSessionManager.ts
- * @description Session Management with Pre-cached Persona Processing
- * 
- * Enables instant session switching by:
- * 1. Pre-processing personas when sessions are created
- * 2. Caching processed LivingPersona objects
- * 3. Syncing with external site session changes
+ * @description Session manager with persona caching and schema-safe fallbacks.
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { processCustomInstruction } from '../services/personaProcessor';
-import { LivingPersona, ChatConfig } from '../types';
-import { personaRepository, sessionRepository } from '../src/data/repositories';
-
-// =====================================================
-// TYPES
-// =====================================================
+import { ChatConfig, LivingPersona } from '../types';
 
 interface AshimSession {
-    id: string;
-    title: string;
-    persona_id: string | null;
-    persona_name?: string;
-    session_config: Partial<ChatConfig>;
-    processed_persona?: LivingPersona | null;
-    is_active: boolean;
-    created_at: string;
+  id: string;
+  title: string;
+  persona_id: string | null;
+  persona_name?: string;
+  session_config: Partial<ChatConfig>;
+  processed_persona?: LivingPersona | null;
+  is_active: boolean;
+  created_at: string;
 }
 
 interface SessionManagerState {
-    currentSession: AshimSession | null;
-    allSessions: AshimSession[];
-    personaCache: Map<string, LivingPersona>;
-    isLoading: boolean;
-    isSwitching: boolean;
+  currentSession: AshimSession | null;
+  allSessions: AshimSession[];
+  personaCache: Map<string, LivingPersona>;
+  isLoading: boolean;
+  isSwitching: boolean;
 }
 
-// =====================================================
-// HOOK
-// =====================================================
+const CACHE_SIZE_LIMIT = 24;
+
+const hasSchemaMismatch = (error: any): boolean => {
+  const message = (error?.message || '').toLowerCase();
+  return (
+    error?.code === '42703' ||
+    error?.code === 'PGRST200' ||
+    error?.code === 'PGRST204' ||
+    message.includes('schema cache') ||
+    message.includes('processed_persona') ||
+    message.includes("relationship between 'sessions' and 'persona_id'")
+  );
+};
+
+const hasMissingTable = (error: any, tableName: string): boolean => {
+  const message = (error?.message || '').toLowerCase();
+  return error?.code === '42P01' || message.includes(`relation "${tableName}" does not exist`);
+};
 
 export function useSessionManager(userId: string | null) {
-    const [state, setState] = useState<SessionManagerState>({
-        currentSession: null,
-        allSessions: [],
-        personaCache: new Map(),
-        isLoading: true,
-        isSwitching: false
+  const [state, setState] = useState<SessionManagerState>({
+    currentSession: null,
+    allSessions: [],
+    personaCache: new Map(),
+    isLoading: true,
+    isSwitching: false,
+  });
+
+  const personaCacheRef = useRef<Map<string, LivingPersona>>(new Map());
+
+  const cachePersona = useCallback((personaId: string, persona: LivingPersona) => {
+    if (personaCacheRef.current.size >= CACHE_SIZE_LIMIT) {
+      const oldestKey = personaCacheRef.current.keys().next().value;
+      if (oldestKey) {
+        personaCacheRef.current.delete(oldestKey);
+      }
+    }
+
+    personaCacheRef.current.set(personaId, persona);
+    setState((prev) => ({ ...prev, personaCache: new Map(personaCacheRef.current) }));
+  }, []);
+
+  const processAndCachePersona = useCallback(
+    async (personaId: string, forceRefresh: boolean = false): Promise<LivingPersona | null> => {
+      if (!forceRefresh) {
+        const cached = personaCacheRef.current.get(personaId);
+        if (cached) {
+          return cached;
+        }
+      }
+
+      const { data: persona, error } = await supabase
+        .from('personas')
+        .select('id, name, system_instruction, living_persona, is_processed')
+        .eq('id', personaId)
+        .maybeSingle();
+
+      if (error || !persona) {
+        console.warn('[SessionManager] Persona fetch failed:', error?.message || 'Not found');
+        return null;
+      }
+
+      if (!forceRefresh && persona.is_processed && persona.living_persona) {
+        const existing = persona.living_persona as LivingPersona;
+        cachePersona(personaId, existing);
+        return existing;
+      }
+
+      if (!persona.system_instruction) {
+        return null;
+      }
+
+      const processed = await processCustomInstruction(persona.system_instruction);
+      if (!processed.success || !processed.persona) {
+        return null;
+      }
+
+      cachePersona(personaId, processed.persona);
+
+      await supabase
+        .from('personas')
+        .update({
+          living_persona: processed.persona,
+          is_processed: true,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', personaId);
+
+      return processed.persona;
+    },
+    [cachePersona],
+  );
+
+  const preloadAllPersonas = useCallback(async () => {
+    if (!userId) return;
+
+    const { data, error } = await supabase
+      .from('personas')
+      .select('id, is_processed, living_persona')
+      .eq('user_id', userId);
+
+    if (error || !data) {
+      return;
+    }
+
+    const pending: Promise<LivingPersona | null>[] = [];
+
+    data.forEach((persona) => {
+      if (personaCacheRef.current.has(persona.id)) {
+        return;
+      }
+
+      if (persona.is_processed && persona.living_persona) {
+        cachePersona(persona.id, persona.living_persona as LivingPersona);
+        return;
+      }
+
+      pending.push(processAndCachePersona(persona.id));
     });
 
-    const personaCacheRef = useRef<Map<string, LivingPersona>>(new Map());
-    const MAX_CACHE_SIZE = 20;
+    if (pending.length) {
+      await Promise.allSettled(pending);
+    }
+  }, [cachePersona, processAndCachePersona, userId]);
 
-    // =====================================================
-    // PERSONA PROCESSING
-    // =====================================================
+  const loadSessions = useCallback(async () => {
+    if (!userId) return;
 
-    /**
-     * Process and cache a persona by ID
-     * FIXED: Now checks personas table for pre-processed state first to prevent token waste
-     */
-    const processAndCachePersona = useCallback(async (
-        personaId: string,
-        forceRefresh: boolean = false
-    ): Promise<LivingPersona | null> => {
-        // Check in-memory cache first (fastest)
-        if (!forceRefresh && personaCacheRef.current.has(personaId)) {
-            console.log('[SessionManager] Persona found in memory cache:', personaId);
-            return personaCacheRef.current.get(personaId)!;
+    setState((prev) => ({ ...prev, isLoading: true }));
+
+    try {
+      let rows: any[] | null = null;
+      let activeError: any = null;
+
+      const fullQuery = await supabase
+        .from('sessions')
+        .select(
+          `
+          id,
+          title,
+          persona_id,
+          session_config,
+          processed_persona,
+          is_active,
+          created_at,
+          personas:persona_id (name)
+        `,
+        )
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (fullQuery.error && hasSchemaMismatch(fullQuery.error)) {
+        const fallbackQuery = await supabase
+          .from('sessions')
+          .select(
+            `
+            id,
+            title,
+            persona_id,
+            session_config,
+            is_active,
+            created_at
+          `,
+          )
+          .eq('user_id', userId)
+          .order('created_at', { ascending: false });
+
+        rows = fallbackQuery.data;
+        activeError = fallbackQuery.error;
+      } else {
+        rows = fullQuery.data;
+        activeError = fullQuery.error;
+      }
+
+      if (activeError) {
+        if (hasMissingTable(activeError, 'sessions')) {
+          setState((prev) => ({
+            ...prev,
+            currentSession: null,
+            allSessions: [],
+            isLoading: false,
+          }));
+          return;
         }
 
-        try {
-            const persona = await personaRepository.getForProcessing(personaId);
+        console.error('[SessionManager] Failed to load sessions:', activeError.message || activeError);
+        setState((prev) => ({ ...prev, isLoading: false }));
+        return;
+      }
 
-            if (!persona) {
-                console.warn('[SessionManager] Persona not found:', personaId);
-                return null;
-            }
+      const sessions: AshimSession[] = (rows || []).map((row) => ({
+        id: row.id,
+        title: row.title,
+        persona_id: row.persona_id,
+        persona_name: (row.personas as any)?.name,
+        session_config: row.session_config || {},
+        processed_persona: row.processed_persona,
+        is_active: row.is_active,
+        created_at: row.created_at,
+      }));
 
-            // FIXED: Check if already processed in DB - use that instead of reprocessing!
-            if (!forceRefresh && persona.is_processed && persona.living_persona) {
-                console.log('[SessionManager] Using pre-processed persona from DB:', persona.name);
-                const cachedPersona = persona.living_persona as LivingPersona;
-                personaCacheRef.current.set(personaId, cachedPersona);
-                setState(prev => ({ ...prev, personaCache: new Map(personaCacheRef.current) }));
-                return cachedPersona;
-            }
+      sessions.forEach((session) => {
+        if (!session.persona_id) return;
 
-            // No cached version - need to process
-            if (!persona.system_instruction) {
-                console.warn('[SessionManager] Persona has no system instruction:', persona.name);
-                return null;
-            }
-
-            console.log('[SessionManager] Processing persona (not cached):', persona.name);
-
-            // Process using personaProcessor
-            const result = await processCustomInstruction(persona.system_instruction);
-
-            if (result.success && result.persona) {
-                // Cache Eviction Policy
-                if (personaCacheRef.current.size >= MAX_CACHE_SIZE) {
-                    const firstKey = personaCacheRef.current.keys().next().value;
-                    if (firstKey) {
-                        personaCacheRef.current.delete(firstKey);
-                    }
-                }
-
-                // Update in-memory cache
-                personaCacheRef.current.set(personaId, result.persona);
-                setState(prev => ({ ...prev, personaCache: new Map(personaCacheRef.current) }));
-
-                // FIXED: Save to PERSONAS table (not sessions) for persistence across reloads
-                try {
-                    await personaRepository.updateProcessedPersona(personaId, result.persona);
-                    console.log('[SessionManager] Saved processed persona to DB:', persona.name);
-                } catch (e) {
-                    console.warn('[SessionManager] Failed to save persona to DB:', e);
-                }
-
-                return result.persona;
-            }
-
-            return null;
-        } catch (error: any) {
-            console.error('[SessionManager] Persona processing error:', error?.message || error);
-            return null;
+        if (session.processed_persona) {
+          cachePersona(session.persona_id, session.processed_persona);
+        } else {
+          processAndCachePersona(session.persona_id);
         }
-    }, []);
+      });
 
-    /**
-     * [AI QUALITY FIX] Preload ALL personas on authentication
-     * This eliminates switching delay by loading all personas upfront
-     */
-    const preloadAllPersonas = useCallback(async () => {
-        if (!userId) return;
+      setState((prev) => ({
+        ...prev,
+        currentSession: sessions.find((session) => session.is_active) || null,
+        allSessions: sessions,
+        personaCache: new Map(personaCacheRef.current),
+        isLoading: false,
+      }));
+    } catch (error: any) {
+      console.error('[SessionManager] Load error:', error?.message || error);
+      setState((prev) => ({ ...prev, isLoading: false }));
+    }
+  }, [cachePersona, processAndCachePersona, userId]);
 
-        console.log('[SessionManager] Preloading all personas...');
-        const startTime = Date.now();
+  const switchSession = useCallback(
+    async (sessionId: string): Promise<{ session: AshimSession; persona: LivingPersona | null } | null> => {
+      const selected = state.allSessions.find((session) => session.id === sessionId);
+      if (!selected || !userId) return null;
 
-        try {
-            const personas = await personaRepository.listProcessingCandidates(userId);
+      setState((prev) => ({ ...prev, isSwitching: true }));
 
-            if (!personas || personas.length === 0) {
-                console.log('[SessionManager] No personas to preload');
-                return;
-            }
+      try {
+        await supabase.from('sessions').update({ is_active: false }).eq('user_id', userId).neq('id', sessionId);
+        await supabase.from('sessions').update({ is_active: true }).eq('id', sessionId);
 
-            let cachedCount = 0;
-            let processCount = 0;
-
-            // Preload each persona - processed ones are instant, others run in background
-            const preloadPromises = personas.map(async (persona) => {
-                if (personaCacheRef.current.has(persona.id)) {
-                    // Already in memory
-                    return;
-                }
-
-                if (persona.is_processed && persona.living_persona) {
-                    // Pre-processed in DB - instant cache
-                    personaCacheRef.current.set(persona.id, persona.living_persona as LivingPersona);
-                    cachedCount++;
-                } else {
-                    // Needs processing - do in background
-                    processAndCachePersona(persona.id);
-                    processCount++;
-                }
-            });
-
-            await Promise.all(preloadPromises);
-
-            // Update state with new cache
-            setState(prev => ({ ...prev, personaCache: new Map(personaCacheRef.current) }));
-
-            const elapsed = Date.now() - startTime;
-            console.log(`[SessionManager] Preloaded ${cachedCount} personas (${processCount} processing) in ${elapsed}ms`);
-
-        } catch (error: any) {
-            console.error('[SessionManager] Preload error:', error?.message || error);
+        let persona: LivingPersona | null = null;
+        if (selected.persona_id) {
+          persona = personaCacheRef.current.get(selected.persona_id) || null;
+          if (!persona) {
+            persona = await processAndCachePersona(selected.persona_id);
+          }
         }
-    }, [userId, processAndCachePersona]);
 
-    // =====================================================
-    // SESSION LOADING
-    // =====================================================
+        setState((prev) => ({
+          ...prev,
+          currentSession: { ...selected, is_active: true },
+          isSwitching: false,
+        }));
 
-    /**
-     * Load all sessions and pre-cache their personas
-     */
-    const loadSessions = useCallback(async () => {
-        if (!userId) return;
+        return { session: selected, persona };
+      } catch (error: any) {
+        console.error('[SessionManager] Switch error:', error?.message || error);
+        setState((prev) => ({ ...prev, isSwitching: false }));
+        return null;
+      }
+    },
+    [processAndCachePersona, state.allSessions, userId],
+  );
 
-        setState(prev => ({ ...prev, isLoading: true }));
+  const createSession = useCallback(
+    async (title: string, personaId: string | null = null): Promise<AshimSession | null> => {
+      if (!userId) return null;
 
-        try {
-            // Load all sessions with their persona info
-            let sessions: any[] | null = null;
-            try {
-                sessions = await sessionRepository.listByUserWithPersona(userId);
-            } catch (error: any) {
-                if (error?.message?.includes('processed_persona') || error?.code === '42703') {
-                    console.warn('[SessionManager] processed_persona column not found, using fallback query');
-                    sessions = await sessionRepository.listByUserWithPersonaFallback(userId);
-                } else {
-                    throw error;
-                }
-            }
+      try {
+        await supabase.from('sessions').update({ is_active: false }).eq('user_id', userId);
 
-            const formattedSessions: AshimSession[] = (sessions || []).map(s => ({
-                id: s.id,
-                title: s.title,
-                persona_id: s.persona_id,
-                persona_name: (s.personas as any)?.name,
-                session_config: s.session_config || {},
-                processed_persona: s.processed_persona,
-                is_active: s.is_active,
-                created_at: s.created_at
-            }));
+        const { data, error } = await supabase
+          .from('sessions')
+          .insert({
+            user_id: userId,
+            title,
+            persona_id: personaId,
+            is_active: true,
+            session_config: {},
+          })
+          .select()
+          .single();
 
-            const activeSession = formattedSessions.find(s => s.is_active) || null;
-
-            // Pre-cache all personas in background
-            for (const session of formattedSessions) {
-                if (session.persona_id) {
-                    if (session.processed_persona) {
-                        personaCacheRef.current.set(session.persona_id, session.processed_persona);
-                    } else {
-                        processAndCachePersona(session.persona_id);
-                    }
-                }
-            }
-
-            setState(prev => ({
-                ...prev,
-                currentSession: activeSession,
-                allSessions: formattedSessions,
-                personaCache: new Map(personaCacheRef.current),
-                isLoading: false
-            }));
-
-        } catch (error: any) {
-            console.error('[SessionManager] Load error:', error?.message || error);
-            setState(prev => ({ ...prev, isLoading: false }));
+        if (error || !data) {
+          throw error;
         }
-    }, [userId, processAndCachePersona]);
 
-    // =====================================================
-    // SESSION SWITCHING
-    // =====================================================
-
-    const switchSession = useCallback(async (sessionId: string): Promise<{
-        session: AshimSession;
-        persona: LivingPersona | null;
-    } | null> => {
-        const session = state.allSessions.find(s => s.id === sessionId);
-        if (!session) return null;
-
-        setState(prev => ({ ...prev, isSwitching: true }));
-
-        try {
-            await sessionRepository.deactivateOthers(userId, sessionId);
-            await sessionRepository.activate(sessionId);
-
-            let persona: LivingPersona | null = null;
-            if (session.persona_id) {
-                persona = personaCacheRef.current.get(session.persona_id) || null;
-                if (!persona) {
-                    console.log('[SessionManager] Cache miss, processing persona...');
-                    persona = await processAndCachePersona(session.persona_id);
-                }
-            }
-
-            setState(prev => ({
-                ...prev,
-                currentSession: { ...session, is_active: true },
-                isSwitching: false
-            }));
-
-            console.log('[SessionManager] Switched to session:', session.title);
-            return { session, persona };
-
-        } catch (error: any) {
-            console.error('[SessionManager] Switch error:', error?.message || error);
-            setState(prev => ({ ...prev, isSwitching: false }));
-            return null;
-        }
-    }, [userId, state.allSessions, processAndCachePersona]);
-
-    const createSession = useCallback(async (
-        title: string,
-        personaId: string | null = null
-    ): Promise<AshimSession | null> => {
-        if (!userId) return null;
-
-        try {
-            await sessionRepository.deactivateByUser(userId);
-            const data = await sessionRepository.createSession({
-                userId,
-                title,
-                personaId,
-                sessionConfig: {},
-            });
-
-            const newSession: AshimSession = {
-                id: data.id,
-                title: data.title,
-                persona_id: data.persona_id,
-                session_config: {},
-                is_active: true,
-                created_at: data.created_at
-            };
-
-            if (personaId) {
-                processAndCachePersona(personaId);
-            }
-
-            setState(prev => ({
-                ...prev,
-                currentSession: newSession,
-                allSessions: [newSession, ...prev.allSessions]
-            }));
-
-            return newSession;
-
-        } catch (error: any) {
-            console.error('[SessionManager] Create error:', error?.message || error);
-            return null;
-        }
-    }, [userId, processAndCachePersona]);
-
-    // =====================================================
-    // REALTIME SYNC
-    // =====================================================
-
-    useEffect(() => {
-        if (!userId) return;
-
-        loadSessions();
-
-        // [AI QUALITY FIX] Preload ALL personas on auth for instant switching
-        preloadAllPersonas();
-
-        const channel = supabase
-            .channel(`session-manager-${userId}`)
-            .on('postgres_changes', {
-                event: '*',
-                schema: 'public',
-                table: 'sessions',
-                filter: `user_id=eq.${userId}`
-            }, async (payload) => {
-                const data = payload.new as any;
-
-                if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
-                    if (data.is_active) {
-                        const session: AshimSession = {
-                            id: data.id,
-                            title: data.title,
-                            persona_id: data.persona_id,
-                            session_config: data.session_config || {},
-                            processed_persona: data.processed_persona,
-                            is_active: true,
-                            created_at: data.created_at
-                        };
-
-                        if (data.persona_id) {
-                            if (data.processed_persona) {
-                                personaCacheRef.current.set(data.persona_id, data.processed_persona);
-                            } else {
-                                await processAndCachePersona(data.persona_id);
-                            }
-                        }
-
-                        setState(prev => ({
-                            ...prev,
-                            currentSession: session,
-                            personaCache: new Map(personaCacheRef.current)
-                        }));
-                    }
-                }
-
-                if (payload.eventType === 'DELETE') {
-                    setState(prev => ({
-                        ...prev,
-                        allSessions: prev.allSessions.filter(s => s.id !== data.id),
-                        currentSession: prev.currentSession?.id === data.id ? null : prev.currentSession
-                    }));
-                }
-            })
-            .subscribe();
-
-        return () => {
-            supabase.removeChannel(channel);
+        const nextSession: AshimSession = {
+          id: data.id,
+          title: data.title,
+          persona_id: data.persona_id,
+          session_config: data.session_config || {},
+          is_active: true,
+          created_at: data.created_at,
         };
-    }, [userId, loadSessions, processAndCachePersona]);
 
-    const getCurrentPersona = useCallback((): LivingPersona | null => {
-        if (!state.currentSession?.persona_id) return null;
-        return personaCacheRef.current.get(state.currentSession.persona_id) || null;
-    }, [state.currentSession]);
+        if (personaId) {
+          processAndCachePersona(personaId);
+        }
 
-    const getPersona = useCallback((personaId: string): LivingPersona | null => {
-        return personaCacheRef.current.get(personaId) || null;
-    }, []);
+        setState((prev) => ({
+          ...prev,
+          currentSession: nextSession,
+          allSessions: [nextSession, ...prev.allSessions],
+        }));
 
-    return {
-        currentSession: state.currentSession,
-        allSessions: state.allSessions,
-        isLoading: state.isLoading,
-        isSwitching: state.isSwitching,
-        switchSession,
-        createSession,
-        loadSessions,
-        processAndCachePersona,
-        preloadAllPersonas, // [AI QUALITY FIX] Exposed for manual preload
-        getCurrentPersona,
-        getPersona
+        return nextSession;
+      } catch (error: any) {
+        console.error('[SessionManager] Create error:', error?.message || error);
+        return null;
+      }
+    },
+    [processAndCachePersona, userId],
+  );
+
+  useEffect(() => {
+    if (!userId) return;
+
+    loadSessions();
+    preloadAllPersonas();
+
+    const channel = supabase
+      .channel(`session-manager-${userId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'sessions',
+          filter: `user_id=eq.${userId}`,
+        },
+        () => {
+          loadSessions();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
     };
+  }, [loadSessions, preloadAllPersonas, userId]);
+
+  const getCurrentPersona = useCallback((): LivingPersona | null => {
+    if (!state.currentSession?.persona_id) return null;
+    return personaCacheRef.current.get(state.currentSession.persona_id) || null;
+  }, [state.currentSession]);
+
+  const getPersona = useCallback((personaId: string): LivingPersona | null => {
+    return personaCacheRef.current.get(personaId) || null;
+  }, []);
+
+  return {
+    currentSession: state.currentSession,
+    allSessions: state.allSessions,
+    isLoading: state.isLoading,
+    isSwitching: state.isSwitching,
+    switchSession,
+    createSession,
+    loadSessions,
+    processAndCachePersona,
+    preloadAllPersonas,
+    getCurrentPersona,
+    getPersona,
+  };
 }
 
 export type { AshimSession };

@@ -11,21 +11,16 @@
     ],
     "skipLibCheck": true,
     "types": [
-      "node",
-      "vite/client"
+      "node"
     ],
     "moduleResolution": "bundler",
     "isolatedModules": true,
     "moduleDetection": "force",
     "allowJs": true,
     "jsx": "react-jsx",
-    "baseUrl": ".",
     "paths": {
       "@/*": [
         "./*"
-      ],
-      "@ashim/engine": [
-        "./packages/engine/src/index.ts"
       ]
     },
     "allowImportingTsExtensions": true,

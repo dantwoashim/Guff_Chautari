@@ -2,8 +2,6 @@
 import { supabase } from '../lib/supabase';
 import { RelationshipState, initializeRelationshipState } from './relationshipDynamics';
 
-const supabaseDb = supabase;
-
 export async function saveRelationshipState(
     userId: string,
     state: RelationshipState
@@ -20,7 +18,7 @@ export async function saveRelationshipState(
     // Ensure we have a valid partner ID (user ID)
     const partnerId = state.partnerId || userId;
 
-    const { error } = await supabaseDb
+    const { error } = await supabase
         .from('relationship_states')
         .upsert({
             user_id: userId,
@@ -48,7 +46,7 @@ export async function loadRelationshipState(
 ): Promise<RelationshipState | null> {
     if (!personaId || !userId) return null;
 
-    const { data, error } = await supabaseDb
+    const { data, error } = await supabase
         .from('relationship_states')
         .select('*')
         .eq('persona_id', personaId)

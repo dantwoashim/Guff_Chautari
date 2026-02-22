@@ -1,153 +1,156 @@
-
-import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Smile, Mic, Send } from '../Icons';
+import React, { useEffect, useRef, useState } from 'react';
+import { Mic, Paperclip, Send, Smile } from '../Icons';
 import VoiceRecorder from '../VoiceRecorder';
 import EmojiPicker from '../EmojiPicker';
 
 interface MessageInputProps {
-    onSend: (text: string) => void;
-    onFileSelect: (e: React.ChangeEvent<HTMLInputElement>) => void;
-    onTypingStart?: () => void;
-    onVoiceComplete?: (blob: Blob, duration: number) => void;
-    fileInputRef?: React.RefObject<HTMLInputElement | null>;
-    hasAttachments?: boolean; // NEW: indicates if attachments are pending
+  onSend: (text: string) => void;
+  onFileSelect: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onTypingStart?: () => void;
+  onVoiceComplete?: (blob: Blob, duration: number) => void;
+  fileInputRef?: React.RefObject<HTMLInputElement | null>;
+  hasAttachments?: boolean;
 }
 
 const MessageInput: React.FC<MessageInputProps> = ({
-    onSend,
-    onFileSelect,
-    onTypingStart,
-    onVoiceComplete,
-    fileInputRef,
-    hasAttachments = false
+  onSend,
+  onFileSelect,
+  onTypingStart,
+  onVoiceComplete,
+  fileInputRef,
+  hasAttachments = false,
 }) => {
-    const [text, setText] = useState('');
-    const [isRecording, setIsRecording] = useState(false);
-    const [showEmoji, setShowEmoji] = useState(false);
+  const [text, setText] = useState('');
+  const [recording, setRecording] = useState(false);
+  const [showEmoji, setShowEmoji] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const emojiRef = useRef<HTMLDivElement>(null);
 
-    const textareaRef = useRef<HTMLTextAreaElement>(null);
-    const emojiRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!textareaRef.current) {
+      return;
+    }
+    textareaRef.current.style.height = 'auto';
+    textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 140)}px`;
+  }, [text]);
 
-    // Auto-resize textarea
-    useEffect(() => {
-        if (textareaRef.current) {
-            textareaRef.current.style.height = 'auto';
-            textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px';
-        }
-    }, [text]);
-
-    // Click outside emoji picker
-    useEffect(() => {
-        const handleClickOutside = (e: MouseEvent) => {
-            if (emojiRef.current && !emojiRef.current.contains(e.target as Node)) {
-                setShowEmoji(false);
-            }
-        };
-        document.addEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, []);
-
-    const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            // Allow sending with text OR attachments
-            if (text.trim() || hasAttachments) {
-                onSend(text.trim());
-                setText('');
-            }
-        }
+  useEffect(() => {
+    const handler = (event: MouseEvent) => {
+      if (emojiRef.current && !emojiRef.current.contains(event.target as Node)) {
+        setShowEmoji(false);
+      }
     };
 
-    const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-        setText(e.target.value);
-        onTypingStart?.();
-    };
+    window.addEventListener('mousedown', handler);
+    return () => window.removeEventListener('mousedown', handler);
+  }, []);
 
-    return (
-        <div className={`min-h-[62px] bg-[#202c33] px-4 py-2 flex items-end gap-3 z-20 ${isRecording ? 'items-center' : ''}`}>
+  const canSend = Boolean(text.trim()) || hasAttachments;
 
-            {/* Hidden File Input */}
-            <input
-                type="file"
-                ref={fileInputRef}
-                onChange={onFileSelect}
-                className="hidden"
-                multiple
-                accept="image/*,video/*,audio/*"
-            />
+  return (
+    <div className="border-t border-[color:var(--color-border)] bg-[color:rgba(9,19,31,0.85)] backdrop-blur-xl p-3">
+      <div className="premium-panel p-2 flex items-end gap-2">
+        <input
+          type="file"
+          ref={fileInputRef}
+          onChange={onFileSelect}
+          className="hidden"
+          multiple
+          accept="image/*,video/*,audio/*"
+        />
 
-            {!isRecording && (
-                <button
-                    onClick={() => fileInputRef?.current?.click()}
-                    className="p-2 text-[#8696a0] hover:text-[#e9edef] transition-colors mb-1"
-                    title="Attach file"
-                >
-                    <Plus size={24} />
-                </button>
-            )}
+        {!recording ? (
+          <button
+            onClick={() => fileInputRef?.current?.click()}
+            className="premium-button h-10 w-10 inline-flex items-center justify-center shrink-0"
+            title="Attach files"
+            aria-label="Attach files"
+          >
+            <Paperclip size={16} />
+          </button>
+        ) : null}
 
-            {!isRecording && (
-                <div className="flex-1 wa-input-wrapper">
-                    <div className="relative" ref={emojiRef}>
-                        <button
-                            onClick={() => setShowEmoji(!showEmoji)}
-                            className="mr-3 text-[#8696a0] hover:text-[#e9edef] transition-colors mb-0.5"
-                        >
-                            <Smile size={24} />
-                        </button>
-                        {showEmoji && (
-                            <div className="absolute bottom-full left-0 mb-2 z-50">
-                                <EmojiPicker
-                                    onSelect={(emoji: string) => {
-                                        setText(prev => prev + emoji);
-                                        // Don't close immediately to allow multiple selection
-                                        textareaRef.current?.focus();
-                                    }}
-                                    onClose={() => setShowEmoji(false)}
-                                    isDarkMode={true}
-                                />
-                            </div>
-                        )}
-                    </div>
+        {!recording ? (
+          <div className="flex-1 min-w-0 flex items-end gap-2">
+            <div className="relative" ref={emojiRef}>
+              <button
+                onClick={() => setShowEmoji((prev) => !prev)}
+                className="premium-button h-10 w-10 inline-flex items-center justify-center"
+                title="Emoji"
+                aria-label="Open emoji picker"
+              >
+                <Smile size={16} />
+              </button>
 
-                    <textarea
-                        ref={textareaRef}
-                        value={text}
-                        onChange={handleChange}
-                        onKeyDown={handleKeyDown}
-                        rows={1}
-                        placeholder="Type a message"
-                        className="wa-input"
-                    />
+              {showEmoji ? (
+                <div className="absolute bottom-[calc(100%+8px)] left-0 z-50">
+                  <EmojiPicker
+                    onSelect={(emoji: string) => {
+                      setText((prev) => prev + emoji);
+                      textareaRef.current?.focus();
+                    }}
+                    onClose={() => setShowEmoji(false)}
+                    isDarkMode={true}
+                  />
                 </div>
-            )}
+              ) : null}
+            </div>
 
-            {(text.trim() || hasAttachments) ? (
-                <button
-                    onClick={() => { onSend(text.trim()); setText(''); }}
-                    className="p-2.5 text-[#8696a0] hover:text-[#e9edef] transition-colors mb-1"
-                >
-                    <Send size={24} />
-                </button>
-            ) : (
-                onVoiceComplete ? (
-                    <VoiceRecorder
-                        onRecordingComplete={(blob, dur) => {
-                            onVoiceComplete(blob, dur);
-                            setIsRecording(false);
-                        }}
-                        onRecordingStart={() => setIsRecording(true)}
-                        onRecordingCancel={() => setIsRecording(false)}
-                        className={isRecording ? "flex-1 w-full" : "shrink-0"}
-                    />
-                ) : (
-                    <button className="p-2.5 text-[#8696a0] hover:text-[#e9edef] transition-colors mb-1">
-                        <Mic size={24} />
-                    </button>
-                )
-            )}
-        </div>
-    );
+            <textarea
+              ref={textareaRef}
+              value={text}
+              onChange={(event) => {
+                setText(event.target.value);
+                onTypingStart?.();
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  if (canSend) {
+                    onSend(text.trim());
+                    setText('');
+                  }
+                }
+              }}
+              rows={1}
+              className="premium-input min-h-[46px] max-h-[140px] resize-none"
+              placeholder="Message Ashim..."
+            />
+          </div>
+        ) : null}
+
+        {canSend ? (
+          <button
+            onClick={() => {
+              onSend(text.trim());
+              setText('');
+            }}
+            className="premium-button h-10 w-10 inline-flex items-center justify-center shrink-0 bg-[color:rgba(108,199,255,0.2)] border-[color:rgba(108,199,255,0.45)]"
+            aria-label="Send message"
+          >
+            <Send size={16} />
+          </button>
+        ) : onVoiceComplete ? (
+          <VoiceRecorder
+            onRecordingComplete={(blob, duration) => {
+              onVoiceComplete(blob, duration);
+              setRecording(false);
+            }}
+            onRecordingStart={() => setRecording(true)}
+            onRecordingCancel={() => setRecording(false)}
+            className={recording ? 'flex-1 w-full' : 'shrink-0'}
+          />
+        ) : (
+          <button
+            className="premium-button h-10 w-10 inline-flex items-center justify-center shrink-0"
+            aria-label="Record voice"
+          >
+            <Mic size={16} />
+          </button>
+        )}
+      </div>
+    </div>
+  );
 };
 
 export default MessageInput;

@@ -1,46 +1,28 @@
 
-import { useState, useRef, useCallback, type SetStateAction } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { Message } from '../../types';
-import { useAppStore } from '../../src/store';
-import { messageRepository } from '../../src/data/repositories';
+import { supabase } from '../../lib/supabase';
 
-const EMPTY_MESSAGES: Message[] = [];
-
-export const useMessages = (activeThreadId: string | null) => {
-  const messages = useAppStore((state) => {
-    if (!activeThreadId) return EMPTY_MESSAGES;
-    return state.messagesByThread[activeThreadId] ?? EMPTY_MESSAGES;
-  });
-  const setThreadMessages = useAppStore((state) => state.setThreadMessages);
-  const appendThreadMessage = useAppStore((state) => state.appendThreadMessage);
-  const updateThreadMessageInStore = useAppStore((state) => state.updateThreadMessage);
-
+export const useMessages = () => {
+  const [messages, setMessages] = useState<Message[]>([]);
   const [visibleCount, setVisibleCount] = useState(50);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const setMessages = useCallback(
-    (value: SetStateAction<Message[]>) => {
-      if (!activeThreadId) return;
-      const nextMessages = typeof value === 'function' ? value(messages) : value;
-      setThreadMessages(activeThreadId, nextMessages);
-    },
-    [activeThreadId, messages, setThreadMessages]
-  );
-
   const addMessage = useCallback((message: Message) => {
-    if (!activeThreadId) return;
-    appendThreadMessage(activeThreadId, message);
-  }, [activeThreadId, appendThreadMessage]);
+    setMessages(prev => [...prev, message]);
+  }, []);
 
   const updateMessage = useCallback((id: string, updates: Partial<Message>) => {
-    if (!activeThreadId) return;
-    updateThreadMessageInStore(activeThreadId, id, updates);
-  }, [activeThreadId, updateThreadMessageInStore]);
+    setMessages(prev => prev.map(m => m.id === id ? { ...m, ...updates } : m));
+  }, []);
 
   // Legacy: Save all messages at once
   const saveMessages = useCallback(async (sessionId: string, newMessages: Message[]) => {
     try {
-      await messageRepository.saveMessages(sessionId, newMessages);
+      await supabase.from('chats').update({
+        messages: newMessages,
+        updated_at: new Date().toISOString()
+      }).eq('id', sessionId);
     } catch (e) {
       console.error("Failed to save messages", e);
     }
@@ -53,10 +35,26 @@ export const useMessages = (activeThreadId: string | null) => {
     conversationId: string
   ) => {
     try {
-      await messageRepository.upsertMessage(chatId, message, {
-        fallbackMessages: messages,
+      // 1. Append message to chats.messages JSONB array
+      const { error: appendError } = await supabase.rpc('append_chat_message', {
+        p_chat_id: chatId,
+        p_message: message
       });
-      await messageRepository.updateConversationPreview(conversationId, message);
+
+      if (appendError) {
+        // Fallback: If RPC doesn't exist, use traditional update
+        console.warn('append_chat_message RPC failed, using fallback:', appendError);
+        await supabase.from('chats').update({
+          messages: [...messages, message],
+          updated_at: new Date().toISOString()
+        }).eq('id', chatId);
+      }
+
+      // 2. Update conversation preview
+      await supabase.from('conversations').update({
+        last_message_text: message.text?.slice(0, 100) || '[media]',
+        last_message_at: new Date().toISOString()
+      }).eq('id', conversationId);
 
     } catch (e) {
       console.error('Failed to save message immediately:', e);

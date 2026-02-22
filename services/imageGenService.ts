@@ -1,12 +1,11 @@
 
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { supabase } from '../lib/supabase';
-import { resolveGeminiApiKey } from '../lib/env';
 import { CharacterModel } from '../types';
 import { modelManager } from './modelManager';
 
 const getAiClient = () => {
-    const apiKey = resolveGeminiApiKey();
+    const apiKey = (typeof process !== 'undefined' && process.env) ? process.env.API_KEY : '';
     return new GoogleGenAI({ apiKey: apiKey || '' });
 };
 

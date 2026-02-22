@@ -1,21 +1,19 @@
 
-import type {
-  PersonaBehaviorModel,
-  PersonaChaosFactorModel,
-  PersonaCommunicationModel,
-  PersonaContextModel,
-  PersonaContradiction,
-  PersonaEmotionalStatesModel,
-  PersonaLivingLifeModel,
-  PersonaPsychologyModel,
-  PersonaQuantumEmotionModel,
-  VoiceForensicsProfile,
-} from './src/domain/types/persona';
-import type { MemoryMetadata } from './src/domain/types/memory';
-import type { AmbientDataPayload, PreemptiveActionResult } from './src/domain/types/ambient';
-import type { CommunicationPreferences } from './src/domain/types/dna';
-
 export type Role = 'user' | 'model';
+
+export type AppViewId =
+  | 'chat'
+  | 'video_call'
+  | 'voice_lab'
+  | 'branching'
+  | 'dreams'
+  | 'oracle'
+  | 'memory_palace'
+  | 'dna_vault'
+  | 'verification'
+  | 'admin';
+
+export type ChatListNavView = 'chat' | 'archived' | 'starred';
 
 export interface Attachment {
   id: string;
@@ -43,7 +41,7 @@ export interface Message {
   timestamp: number;
   attachments?: Attachment[];
   replyToId?: string;
-  status?: 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'error';
+  status?: 'sending' | 'sent' | 'delivered' | 'read' | 'error';
   isTyping?: boolean;
   isError?: boolean;
   isImageGenerating?: boolean;
@@ -66,9 +64,6 @@ export interface Conversation {
   id: string;
   persona_id: string;
   persona: Persona;
-  workspace_id?: string | null;
-  visibility?: 'personal' | 'workspace';
-  participant_user_ids?: string[];
   last_message_text?: string;
   last_message_at?: string;
   unread_count: number;
@@ -129,7 +124,7 @@ export interface VoiceProfile {
   id: string;
   name: string;
   description: string;
-  forensics: VoiceForensicsProfile;
+  forensics: any;
   createdAt: number;
 }
 
@@ -174,15 +169,15 @@ export interface LivingPersona {
   createdAt: number;
   updatedAt: number;
   core: PersonaCore;
-  communication: PersonaCommunicationModel;
-  behavior: PersonaBehaviorModel;
-  context: PersonaContextModel;
-  psychology?: PersonaPsychologyModel;
-  emotional_states?: PersonaEmotionalStatesModel;
-  contradictions?: PersonaContradiction[];
-  living_life?: PersonaLivingLifeModel;
-  quantum_emotions?: PersonaQuantumEmotionModel;
-  chaos_factors?: PersonaChaosFactorModel;
+  communication: any; // Detailed structure in processors
+  behavior: any;
+  context: any;
+  psychology?: any;
+  emotional_states?: any;
+  contradictions?: any[];
+  living_life?: any;
+  quantum_emotions?: any;
+  chaos_factors?: any;
   rawInstruction?: string;
   compiledPrompt: string;
   processingNotes?: string[];
@@ -262,7 +257,7 @@ export interface Memory {
   decayFactor: number;
   connections: string[];
   emotionalValence: number;
-  metadata: MemoryMetadata;
+  metadata: Record<string, any>;
 }
 
 export interface MemoryCluster {
@@ -288,7 +283,7 @@ export interface ConsciousnessState {
 
 export interface AmbientInput {
   type: string;
-  data: AmbientDataPayload;
+  data: any;
   timestamp: number;
 }
 
@@ -378,7 +373,7 @@ export interface PreemptiveAction {
   id: string;
   description: string;
   status: 'pending' | 'completed' | 'failed';
-  result?: PreemptiveActionResult;
+  result?: any;
 }
 
 // DNA Types
@@ -387,7 +382,7 @@ export interface CognitiveDNA {
   userId: string;
   version: string;
   exportedAt: number;
-  communicationPreferences?: CommunicationPreferences;
+  communicationPreferences?: any;
   learnedContext?: string;
   interactionPatterns?: string[];
   signature: string;

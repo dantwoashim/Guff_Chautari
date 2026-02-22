@@ -5,7 +5,7 @@
  */
 import React, { useState, useEffect } from 'react';
 import { X, Layers, Plus, Loader2 } from './Icons';
-import { messageRepository, personaRepository, sessionRepository } from '../src/data/repositories';
+import { supabase } from '../lib/supabase';
 interface SessionModalProps {
     isOpen: boolean;
     onClose: () => void;
@@ -36,11 +36,15 @@ const SessionModal: React.FC<SessionModalProps> = ({
         const loadPersonas = async () => {
             setIsLoading(true);
             try {
-                const data = await personaRepository.listByUser(userId);
-                setPersonas(data);
+                // REMOVED: avatar_url from select
+                const { data } = await supabase
+                    .from('personas')
+                    .select('id, name')
+                    .eq('user_id', userId)
+                    .order('created_at', { ascending: false });
+                setPersonas(data || []);
             } catch (error) {
                 console.error('Failed to load personas:', error);
-                setPersonas([]);
             } finally {
                 setIsLoading(false);
             }
@@ -51,20 +55,31 @@ const SessionModal: React.FC<SessionModalProps> = ({
         if (!userId) return;
         setIsCreating(true);
         try {
-            await sessionRepository.deactivateByUser(userId);
-            const data = await sessionRepository.createSession({
-                userId,
-                title: title || 'New Session',
-                personaId: selectedPersonaId || null,
-                sessionConfig: {}
-            });
+            // Deactivate other sessions
+            await supabase
+                .from('sessions')
+                .update({ is_active: false })
+                .eq('user_id', userId);
+            // Create new session
+            const { data, error } = await supabase
+                .from('sessions')
+                .insert({
+                    user_id: userId,
+                    title: title || 'New Session',
+                    persona_id: selectedPersonaId || null,
+                    is_active: true,
+                    session_config: {}
+                })
+                .select()
+                .single();
+            if (error) throw error;
             console.log('[SessionModal] Created session:', data);
-            await messageRepository.createChat({
-                userId,
-                sessionId: data.id,
-                personaId: selectedPersonaId || null,
+            // Create first chat in session
+            await supabase.from('chats').insert({
+                user_id: userId,
+                session_id: data.id,
                 title: 'New Chat',
-                messages: [],
+                messages: []
             });
             onSessionCreated?.(data);
             onClose();

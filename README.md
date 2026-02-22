@@ -1,87 +1,20 @@
-# Ashim
+<div align="center">
+<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+</div>
 
-Ashim is a final-year college capstone project: a BYOK (Bring Your Own Key) AI workspace focused on chat, workflow support, memory recall, and productivity tools.
+# Run and deploy your AI Studio app
 
-## Project Context
-This repository documents the final implementation submitted as a capstone project.
+This contains everything you need to run your app locally.
 
-Development approach:
-- Pre-development phase (before coding): problem research, user needs analysis, and architecture design.
-- Implementation phase: completed in an 8-week development window (about 2 months).
+View your app in AI Studio: https://ai.studio/apps/drive/1n41U06XC0cdRhj769c-b-BXWXj7NgsND
 
-## What the Project Solves
-- Consolidates chat, memory, and workflow actions in one interface.
-- Keeps model access user-owned through BYOK.
-- Provides a practical local/self-hosted deployment path.
+## Run Locally
 
-## Core Features
-- Chat interface with conversation persistence.
-- Workflow and automation runtime foundations.
-- Memory retrieval and context-aware response support.
-- BYOK key management and validation.
-- API gateway routes for conversations, workflows, memory, and operations.
+**Prerequisites:**  Node.js
 
-## High-Level Architecture
-- Frontend: React + Vite
-- State: Zustand
-- Backend/data integration: Supabase client + repository boundaries
-- Runtime modules: `src/engine/*`, `src/workflows/*`, `src/data/repositories/*`
-- Deployment: Docker + Nginx + Docker Compose
 
-Detailed architecture: `docs/architecture-spec.md`
-
-## Quick Start
-### Prerequisites
-- Node.js 20+
-- npm 10+
-- Supabase project (`URL` and `anon key`)
-
-### Local Run
-```bash
-npm install
-cp .env.example .env.local
-npm run dev
-```
-
-### Required env values
-```bash
-VITE_SUPABASE_URL=YOUR_SUPABASE_URL
-VITE_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
-VITE_ENABLE_MOCK_CONNECTORS=false
-```
-
-## Self-Hosting
-```bash
-./scripts/self-host-setup.sh
-npm run deploy:preflight
-npm run deploy:up
-```
-
-Self-host guide: `docs/self-host-guide.md`
-
-## Free Cloud Deployment
-Use free tiers:
-- GitHub (code hosting)
-- Cloudflare Pages (frontend hosting)
-- Supabase free tier (backend/auth)
-
-Step-by-step guide: `docs/site/deploy-free.md`
-
-## Quality Gates
-```bash
-npm run lint
-npm run lint:db-boundary
-npm run typecheck
-npm run test
-npm run build
-npm run ci
-```
-
-## Documentation
-- Project report: `docs/project-report.md`
-- Architecture: `docs/architecture-spec.md`
-- API reference: `docs/api-reference.md`
-- Setup docs index: `docs/site/index.md`
-
-## License
-See `LICENSE`.
+1. Install dependencies:
+   `npm install`
+2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+3. Run the app:
+   `npm run dev`

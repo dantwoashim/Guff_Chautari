@@ -1,6 +1,6 @@
 
 import { useState } from 'react';
-import { conversationRepository } from '../src/data/repositories';
+import { supabase } from '../lib/supabase';
 
 export const useConversationActions = () => {
   const [isProcessing, setIsProcessing] = useState(false);
@@ -8,7 +8,12 @@ export const useConversationActions = () => {
   const toggleArchive = async (conversationId: string, currentStatus: boolean) => {
     setIsProcessing(true);
     try {
-      await conversationRepository.updateFlags(conversationId, { is_archived: !currentStatus });
+      const { error } = await supabase
+        .from('conversations')
+        .update({ is_archived: !currentStatus })
+        .eq('id', conversationId);
+      
+      if (error) throw error;
     } catch (error) {
       console.error('Error toggling archive:', error);
     } finally {
@@ -19,7 +24,12 @@ export const useConversationActions = () => {
   const toggleMute = async (conversationId: string, currentStatus: boolean) => {
     setIsProcessing(true);
     try {
-      await conversationRepository.updateFlags(conversationId, { is_muted: !currentStatus });
+      const { error } = await supabase
+        .from('conversations')
+        .update({ is_muted: !currentStatus })
+        .eq('id', conversationId);
+      
+      if (error) throw error;
     } catch (error) {
       console.error('Error toggling mute:', error);
     } finally {
@@ -35,7 +45,12 @@ export const useConversationActions = () => {
 
     setIsProcessing(true);
     try {
-      await conversationRepository.updateFlags(conversationId, { is_pinned: !currentStatus });
+      const { error } = await supabase
+        .from('conversations')
+        .update({ is_pinned: !currentStatus })
+        .eq('id', conversationId);
+      
+      if (error) throw error;
     } catch (error) {
       console.error('Error toggling pin:', error);
     } finally {
@@ -46,7 +61,12 @@ export const useConversationActions = () => {
   const markUnread = async (conversationId: string) => {
     setIsProcessing(true);
     try {
-      await conversationRepository.updateFlags(conversationId, { unread_count: 1 });
+      const { error } = await supabase
+        .from('conversations')
+        .update({ unread_count: 1 }) // Simple toggle logic could be more complex
+        .eq('id', conversationId);
+      
+      if (error) throw error;
     } catch (error) {
       console.error('Error marking unread:', error);
     } finally {
@@ -57,7 +77,14 @@ export const useConversationActions = () => {
   const executeDelete = async (conversationId: string) => {
     setIsProcessing(true);
     try {
-      await conversationRepository.deleteConversation(conversationId);
+      // Cascading delete should handle messages if configured in DB, otherwise manual delete might be needed
+      // Assuming DB foreign keys set to CASCADE
+      const { error } = await supabase
+        .from('conversations')
+        .delete()
+        .eq('id', conversationId);
+      
+      if (error) throw error;
     } catch (error) {
       console.error('Error deleting chat:', error);
     } finally {

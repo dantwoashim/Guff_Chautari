@@ -9,9 +9,8 @@ import {
     getMessageDelay,
     PersonaState
 } from '../services/spontaneousMessaging';
+import { supabase } from '../lib/supabase';
 import { getTimeContext } from '../services/timeContextService';
-import { messageRepository } from '../src/data';
-import type { Message } from '../types';
 
 export const useSpontaneousMessaging = (
     userId: string | undefined,
@@ -44,7 +43,13 @@ export const useSpontaneousMessaging = (
 
             try {
                 // 1. FETCH ACTUAL DB STATE (Single Source of Truth)
-                const chat = await messageRepository.getMessagesWithCreatedAt(currentSessionId);
+                const { data: chat, error } = await supabase
+                    .from('chats')
+                    .select('messages, created_at')
+                    .eq('id', currentSessionId)
+                    .maybeSingle(); // Changed from single() to avoid PGRST116
+
+                if (error) throw error;
                 if (!chat) return; // Silent exit if chat doesn't exist yet
 
                 const messages = chat.messages || [];
@@ -54,7 +59,7 @@ export const useSpontaneousMessaging = (
                 // SCENARIO A: COLD START (New Chat)
                 // =================================================
                 if (!lastMessage) {
-                    const createdTime = chat.createdAt ? new Date(chat.createdAt).getTime() : now;
+                    const createdTime = new Date(chat.created_at).getTime();
                     // If chat is < 10 mins old and empty, send greeting
                     if (now - createdTime < 10 * 60 * 1000) {
                         const timeCtx = getTimeContext();
@@ -127,8 +132,11 @@ export const useSpontaneousMessaging = (
 
                     timerRef.current = setTimeout(async () => {
                         // Double check state before sending in case user replied during delay
-                        const freshMessages = await messageRepository.getMessages(currentSessionId);
-                        const freshLast = freshMessages[freshMessages.length - 1];
+                        const { data: freshChat } = await supabase.from('chats').select('messages').eq('id', currentSessionId).maybeSingle();
+
+                        if (!freshChat) return;
+
+                        const freshLast = freshChat?.messages?.[freshChat.messages.length - 1];
 
                         // If the last message ID changed, it means someone (user or AI) sent a message. Abort.
                         if (freshLast && freshLast.id !== lastMessage.id) {
@@ -159,7 +167,7 @@ export const useSpontaneousMessaging = (
 
     // Helper to send message to DB
     const sendMessage = async (sessionId: string, text: string, type: string, currentMessages: any[]) => {
-        const newMsg: Message = {
+        const newMsg = {
             id: `spont_${Date.now()}`,
             role: 'model',
             text: text,
@@ -168,13 +176,14 @@ export const useSpontaneousMessaging = (
             generationLogs: [`Spontaneous: ${type}`]
         };
 
-        try {
-            await messageRepository.upsertMessage(sessionId, newMsg, {
-                fallbackMessages: currentMessages as Message[],
-            });
-            console.log(`[Spontaneous] Sent ${type} message.`);
-        } catch (error) {
-            console.error('[Spontaneous] Failed to persist spontaneous message:', error);
-        }
+        const { error } = await supabase
+            .from('chats')
+            .update({
+                messages: [...currentMessages, newMsg],
+                updated_at: new Date().toISOString()
+            })
+            .eq('id', sessionId);
+
+        if (!error) console.log(`[Spontaneous] Sent ${type} message.`);
     };
 };

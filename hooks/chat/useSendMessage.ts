@@ -1,25 +1,27 @@
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
+import { supabase } from '../../lib/supabase';
 import { Message, ChatConfig, Attachment, ConversationTree, LivingPersona } from '../../types';
-import type { HumanResponsePlan, PersonaContext } from '../../services/humanResponseService';
-import { messageRepository } from '../../src/data';
+import { getOrCreateChatSession, sendMessageStream, formatHistory, uploadFileToStorage, transcribeAudio, invalidateChatSession, generateWithExplicitCache } from '../../services/geminiService';
+import { createHumanResponsePlan, HumanResponsePlan, PersonaContext, streamHumanResponse } from '../../services/humanResponseService';
+import { analyzeMoodFromConversation } from '../../services/moodAnalysisService';
+import { modelManager } from '../../services/modelManager';
+import { processInteraction, generateResponseContext, generatePromptContext, initializeConsciousness } from '../../services/agiConsciousness';
+import { getLivingPersonaContext, processInteraction as processLivingInteraction } from '../../services/livingPersona';
+import { searchMemories, extractMemoryFromConversation } from '../../services/memoryService';
+import { sanitizeResponse, detectForbiddenPatterns } from '../../services/outputSanitizer';
+import { buildHierarchicalContext, extractRelationshipUpdates } from '../../services/conversationSummarizer';
+import { bgResponseManager } from '../../services/backgroundResponseManager';
+// AGI Masterclass: Cognitive Architecture
 import {
-    enqueueMessage,
-    listQueuedMessages,
-    removeQueuedMessage,
-    updateQueuedMessage
-} from '../../src/offline/messageQueue';
-import {
-    createTraceId,
-    trackTelemetryEvent
-} from '../../src/observability/telemetry';
-import {
-    isShadowModeEnabled,
-    linkTraceToAssistantMessage,
-    recordShadowTrace
-} from '../../src/observability/shadowMode';
-import type { ResponseTimingModel } from '../../services/cognitiveArchitecture';
+    applyAttentionFilter,
+    generateAttentionContextInjection,
+    initializeTimingModel,
+    generateNextDelay,
+    ResponseTimingModel,
+    AttentionState
+} from '../../services/cognitiveArchitecture';
 
 // 🔥 SOTA: Gemini Explicit Context Caching Feature Flag
 // Set to true to use Gemini's explicit caching API for 42k+ personas
@@ -28,41 +30,6 @@ const USE_EXPLICIT_CACHING = true;
 
 // Helper to wait
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-const isRemoteHttpUrl = (value: string | undefined): boolean => {
-    return typeof value === 'string' && /^https?:\/\//i.test(value);
-};
-
-const extractBase64Payload = (attachment: Attachment): string => {
-    if (attachment.data && attachment.data.length > 0) return attachment.data;
-    if (attachment.url?.startsWith('data:')) {
-        const payload = attachment.url.split(',')[1];
-        return payload || '';
-    }
-    return '';
-};
-
-const attachmentToFile = (attachment: Attachment): File | null => {
-    const base64Payload = extractBase64Payload(attachment);
-    if (!base64Payload || typeof atob !== 'function') return null;
-
-    try {
-        const binary = atob(base64Payload);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) {
-            bytes[i] = binary.charCodeAt(i);
-        }
-        const fallbackExt = attachment.mimeType?.split('/')[1] || 'bin';
-        const fallbackName = `attachment-${attachment.id}.${fallbackExt}`;
-        const fileName = attachment.metadata?.name || fallbackName;
-
-        return new File([bytes], fileName, {
-            type: attachment.mimeType || 'application/octet-stream',
-        });
-    } catch {
-        return null;
-    }
-};
 
 // Helper to extract persona context
 const getPersonaContext = (persona: LivingPersona | undefined): PersonaContext => {
@@ -79,170 +46,6 @@ const getPersonaContext = (persona: LivingPersona | undefined): PersonaContext =
         emojiFrequency: emojiFreq,
         baseMood: persona.emotional_states?.baseline_state || 'neutral',
         emotionalState: persona.emotional_states,
-    };
-};
-
-interface RuntimeServiceModules {
-    geminiService: typeof import('../../services/geminiService');
-    humanResponseService: typeof import('../../services/humanResponseService');
-    moodAnalysisService: typeof import('../../services/moodAnalysisService');
-    modelManagerModule: typeof import('../../services/modelManager');
-    agiConsciousness: typeof import('../../services/agiConsciousness');
-    livingPersona: typeof import('../../services/livingPersona');
-    memoryService: typeof import('../../services/memoryService');
-    outputSanitizer: typeof import('../../services/outputSanitizer');
-    conversationSummarizer: typeof import('../../services/conversationSummarizer');
-    backgroundResponseManagerModule: typeof import('../../services/backgroundResponseManager');
-    cognitiveArchitecture: typeof import('../../services/cognitiveArchitecture');
-}
-
-interface PipelineRuntimeModules {
-    createPipelineOrchestrator: typeof import('@ashim/engine').createPipelineOrchestrator;
-}
-
-interface ByokRuntimeModules {
-    BYOKKeyManager: typeof import('../../src/byok/keyManager').BYOKKeyManager;
-    getRuntimeGeminiKey: typeof import('../../src/byok/runtimeKey').getRuntimeGeminiKey;
-}
-
-interface PluginRuntimeModules {
-    listPluginTools: typeof import('../../src/plugins').listPluginTools;
-    invokePluginTool: typeof import('../../src/plugins').invokePluginTool;
-}
-
-let runtimeServiceModulesPromise: Promise<RuntimeServiceModules> | null = null;
-let pipelineRuntimeModulesPromise: Promise<PipelineRuntimeModules> | null = null;
-let byokRuntimeModulesPromise: Promise<ByokRuntimeModules> | null = null;
-let pluginRuntimeModulesPromise: Promise<PluginRuntimeModules> | null = null;
-
-const loadRuntimeServiceModules = async (): Promise<RuntimeServiceModules> => {
-    if (runtimeServiceModulesPromise) {
-        return runtimeServiceModulesPromise;
-    }
-
-    runtimeServiceModulesPromise = Promise.all([
-        import('../../services/geminiService'),
-        import('../../services/humanResponseService'),
-        import('../../services/moodAnalysisService'),
-        import('../../services/modelManager'),
-        import('../../services/agiConsciousness'),
-        import('../../services/livingPersona'),
-        import('../../services/memoryService'),
-        import('../../services/outputSanitizer'),
-        import('../../services/conversationSummarizer'),
-        import('../../services/backgroundResponseManager'),
-        import('../../services/cognitiveArchitecture'),
-    ]).then(([
-        geminiService,
-        humanResponseService,
-        moodAnalysisService,
-        modelManagerModule,
-        agiConsciousness,
-        livingPersona,
-        memoryService,
-        outputSanitizer,
-        conversationSummarizer,
-        backgroundResponseManagerModule,
-        cognitiveArchitecture,
-    ]) => ({
-        geminiService,
-        humanResponseService,
-        moodAnalysisService,
-        modelManagerModule,
-        agiConsciousness,
-        livingPersona,
-        memoryService,
-        outputSanitizer,
-        conversationSummarizer,
-        backgroundResponseManagerModule,
-        cognitiveArchitecture,
-    }));
-
-    return runtimeServiceModulesPromise;
-};
-
-const loadPipelineRuntimeModules = async (): Promise<PipelineRuntimeModules> => {
-    if (pipelineRuntimeModulesPromise) {
-        return pipelineRuntimeModulesPromise;
-    }
-
-    pipelineRuntimeModulesPromise = import('@ashim/engine')
-        .then((orchestratorModule) => ({
-            createPipelineOrchestrator: orchestratorModule.createPipelineOrchestrator,
-        }));
-
-    return pipelineRuntimeModulesPromise;
-};
-
-const loadByokRuntimeModules = async (): Promise<ByokRuntimeModules> => {
-    if (byokRuntimeModulesPromise) {
-        return byokRuntimeModulesPromise;
-    }
-
-    byokRuntimeModulesPromise = Promise.all([
-        import('../../src/byok/keyManager'),
-        import('../../src/byok/runtimeKey'),
-    ]).then(([keyManagerModule, runtimeKeyModule]) => ({
-        BYOKKeyManager: keyManagerModule.BYOKKeyManager,
-        getRuntimeGeminiKey: runtimeKeyModule.getRuntimeGeminiKey,
-    }));
-
-    return byokRuntimeModulesPromise;
-};
-
-const loadPluginRuntimeModules = async (): Promise<PluginRuntimeModules> => {
-    if (pluginRuntimeModulesPromise) {
-        return pluginRuntimeModulesPromise;
-    }
-
-    pluginRuntimeModulesPromise = import('../../src/plugins')
-        .then((pluginModule) => ({
-            listPluginTools: pluginModule.listPluginTools,
-            invokePluginTool: pluginModule.invokePluginTool,
-        }));
-
-    return pluginRuntimeModulesPromise;
-};
-
-const resolveGeminiApiKey = async (): Promise<string | null> => {
-    const byok = await loadByokRuntimeModules();
-    const runtimeKey = byok.getRuntimeGeminiKey()?.trim();
-    if (runtimeKey) {
-        return runtimeKey;
-    }
-
-    const decryptedKey = await byok.BYOKKeyManager.getDecryptedKey('gemini');
-    return decryptedKey?.trim() || null;
-};
-
-const toPipelinePersona = (
-    persona: LivingPersona | undefined,
-    fallbackPersonaId: string,
-    fallbackInstruction: string
-) => {
-    if (!persona) {
-        return {
-            id: fallbackPersonaId,
-            name: 'Assistant',
-            systemInstruction: fallbackInstruction || 'Respond naturally and stay context-aware.',
-        };
-    }
-
-    const attachmentStyleCandidate = (persona as any)?.relationship_dynamics?.attachment_style
-        || (persona as any)?.attachmentStyle;
-    const attachmentStyle = ['secure', 'anxious', 'avoidant', 'disorganized'].includes(attachmentStyleCandidate)
-        ? attachmentStyleCandidate
-        : undefined;
-
-    return {
-        id: persona.id || fallbackPersonaId,
-        name: persona.core?.name || 'Assistant',
-        systemInstruction: persona.compiledPrompt || fallbackInstruction || 'Respond naturally and stay context-aware.',
-        compiledPrompt: persona.compiledPrompt,
-        attachmentStyle,
-        emotionalDebt: typeof (persona as any)?.emotionalDebt === 'number'
-            ? (persona as any).emotionalDebt
-            : undefined,
     };
 };
 
@@ -276,10 +79,9 @@ export const useSendMessage = (
     // SMART INTERRUPTION REFS - Per-session abort controllers for concurrent persona responses
     const sessionAbortControllers = useRef<Map<string, AbortController>>(new Map());
     const pendingProcessingTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const offlineFlushQueueRef = useRef<Promise<void>>(Promise.resolve());
 
     // AGI MASTERCLASS: Non-stationary timing model for anti-detection
-    const timingModelRef = useRef<ResponseTimingModel | null>(null);
+    const timingModelRef = useRef<ResponseTimingModel>(initializeTimingModel());
 
     useEffect(() => {
         messagesRef.current = messages;
@@ -304,8 +106,6 @@ export const useSendMessage = (
         if (e.target.files && e.target.files.length > 0 && session?.user?.id) {
             setIsUploading(true);
             const newAttachments: Attachment[] = [];
-            const isOnline = typeof navigator === 'undefined' ? true : navigator.onLine;
-            const services = isOnline ? await loadRuntimeServiceModules() : null;
             for (let i = 0; i < e.target.files.length; i++) {
                 const file = e.target.files[i];
 
@@ -323,28 +123,15 @@ export const useSendMessage = (
                     reader.readAsDataURL(file);
                 });
 
-                const attachmentType: Attachment['type'] = file.type.startsWith('audio/')
-                    ? 'audio'
-                    : file.type.startsWith('video/')
-                        ? 'video'
-                        : file.type.startsWith('image/')
-                            ? 'image'
-                            : 'file';
-                const localDataUrl = base64Data ? `data:${file.type};base64,${base64Data}` : '';
-
-                let uploadedUrl: string | null = null;
-                if (isOnline && services) {
-                    uploadedUrl = await services.geminiService.uploadFileToStorage(file, 'chat-assets', undefined, session.user.id);
-                }
-
-                if (uploadedUrl || localDataUrl) {
+                const url = await uploadFileToStorage(file, 'chat-assets', undefined, session.user.id);
+                if (url) {
                     newAttachments.push({
                         id: uuidv4(),
-                        type: attachmentType,
+                        type: file.type.startsWith('video/') ? 'video' : 'image',
                         mimeType: file.type,
-                        url: uploadedUrl || localDataUrl,
+                        url,
                         data: base64Data, // Use existing 'data' field for base64
-                        metadata: { name: file.name, size: file.size }
+                        metadata: { name: file.name }
                     });
                     console.log(`[Attachment] Stored ${file.name} with base64 (${base64Data.length} chars)`);
                 }
@@ -369,26 +156,20 @@ export const useSendMessage = (
 
             // [SYNC] Persist read status to DB
             if (currentSessionIdRef.current) {
-                messageRepository
-                    .markUserMessagesRead(currentSessionIdRef.current, { touchUpdatedAt: false })
-                    .catch((error) => {
-                        console.error("[ReadReceipt] Failed to sync:", error);
+                supabase.from('chats')
+                    .update({
+                        messages: updated,
+                        // We intentionally do NOT update updated_at here to prevent chat reordering just for read receipts
+                    })
+                    .eq('id', currentSessionIdRef.current)
+                    .then(({ error }) => {
+                        if (error) console.error("[ReadReceipt] Failed to sync:", error);
                     });
             }
 
             return updated;
         });
     }, [setMessages]);
-
-    const updateLocalMessageStatus = useCallback((messageId: string, status: Message['status']) => {
-        setMessages(prev => prev.map((message) => (
-            message.id === messageId ? { ...message, status } : message
-        )));
-    }, [setMessages]);
-
-    const persistMessageToChat = useCallback(async (sessionId: string, message: Message) => {
-        await messageRepository.upsertMessage(sessionId, message);
-    }, []);
 
     // Updated to use streamHumanResponse generator with robustness (Prompt F5)
     const executeMessagePlan = async (
@@ -403,12 +184,9 @@ export const useSendMessage = (
         let hasReplied = false;
 
         try {
-            const services = await loadRuntimeServiceModules();
-
             // [AGI MASTERCLASS] Non-stationary initial delay
             // Uses drifting distribution with autocorrelation - statistically undetectable
-            const timingModel = timingModelRef.current || services.cognitiveArchitecture.initializeTimingModel();
-            const timingResult = services.cognitiveArchitecture.generateNextDelay(timingModel);
+            const timingResult = generateNextDelay(timingModelRef.current);
             timingModelRef.current = timingResult.model;
             console.log('[Cognitive] Non-stationary delay:', timingResult.delay, 'ms',
                 timingResult.model.burstMode ? '(BURST MODE)' : '');
@@ -459,7 +237,7 @@ export const useSendMessage = (
             const typingCallback = (typing: boolean) => setIsTyping(typing);
 
             try {
-                for await (const humanMsg of services.humanResponseService.streamHumanResponse(plan, typingCallback)) {
+                for await (const humanMsg of streamHumanResponse(plan, typingCallback)) {
                     if (signal.aborted) {
                         setIsTyping(false);
                         return;
@@ -508,8 +286,7 @@ export const useSendMessage = (
         text: string,
         attachments: Attachment[] | undefined,
         sessionId: string,
-        replyToId: string | undefined,
-        traceId?: string
+        replyToId: string | undefined
     ) => {
         const newMessageId = uuidv4();
 
@@ -533,21 +310,26 @@ export const useSendMessage = (
             replyToId
         };
 
-        if (traceId) {
-            linkTraceToAssistantMessage({
-                traceId,
-                assistantMessageId: newMessageId,
-            });
-        }
-
         // Update DB regardless of which session user is viewing
-        void (async () => {
-            try {
-                await messageRepository.upsertMessage(sessionId, newMessage);
-            } catch (error) {
-                console.error('[Session] Failed to persist model message:', error);
-            }
-        })();
+        supabase.from('chats')
+            .select('messages')
+            .eq('id', sessionId)
+            .single()
+            .then(({ data, error }) => {
+                if (error || !data) {
+                    console.error('[Session] Failed to fetch current messages for DB update:', error);
+                    return;
+                }
+                const currentDbMessages = data.messages || [];
+                const updatedDbMessages = [...currentDbMessages, newMessage];
+
+                return supabase.from('chats')
+                    .update({
+                        messages: updatedDbMessages,
+                        updated_at: new Date().toISOString()
+                    })
+                    .eq('id', sessionId);
+            });
 
         // Only update UI state if user is still on the same session
         if (isActiveSession) {
@@ -559,65 +341,9 @@ export const useSendMessage = (
         }
     };
 
-    const executePipelineMessages = async (
-        messages: Array<{
-            text: string;
-            delayBefore: number;
-            typingDuration: number;
-            readDelay: number;
-            revision?: { shouldRevise: boolean; pauseMs: number };
-        }>,
-        sessionId: string,
-        replyToId: string | undefined,
-        signal: AbortSignal,
-        traceId?: string
-    ) => {
-        let hasReplied = false;
-
-        for (const pipelineMessage of messages) {
-            if (signal.aborted) {
-                setIsTyping(false);
-                return;
-            }
-
-            const preDelay = Math.max(0, (pipelineMessage.delayBefore || 0) + (pipelineMessage.readDelay || 0));
-            if (preDelay > 0) {
-                await delay(preDelay);
-            }
-
-            if (signal.aborted) {
-                setIsTyping(false);
-                return;
-            }
-
-            setIsTyping(true);
-            await delay(Math.max(120, pipelineMessage.typingDuration || 0));
-
-            if (pipelineMessage.revision?.shouldRevise && (pipelineMessage.revision.pauseMs || 0) > 0) {
-                await delay(pipelineMessage.revision.pauseMs);
-            }
-
-            if (signal.aborted) {
-                setIsTyping(false);
-                return;
-            }
-
-            setIsTyping(false);
-            addMessageToState(
-                pipelineMessage.text,
-                undefined,
-                sessionId,
-                !hasReplied ? replyToId : undefined,
-                traceId
-            );
-            hasReplied = true;
-        }
-    };
-
-    const processAIResponse = async (contextSnapshot?: { sessionId: string; traceId?: string }) => {
+    const processAIResponse = async (contextSnapshot?: { sessionId: string }) => {
         // PROMPT F4: Use captured context if provided, else use current refs
         const sessionId = contextSnapshot?.sessionId || currentSessionIdRef.current;
-        const traceId = contextSnapshot?.traceId || createTraceId('msg');
 
         // FRESHNESS CHECK: If the session ID changed since the debounce started, abort.
         if (sessionId !== currentSessionIdRef.current) {
@@ -627,32 +353,15 @@ export const useSendMessage = (
 
         const currentConfig = configRef.current;
         const userId = sessionRef.current?.user?.id;
-        if (!sessionId || !userId) return;
-
-        const services = await loadRuntimeServiceModules();
-        const bgResponseManager = services.backgroundResponseManagerModule.bgResponseManager;
 
         const controller = new AbortController();
         // Track abort controller per session for concurrent responses
         sessionAbortControllers.current.set(sessionId, controller);
         const signal = controller.signal;
-        const finalizeResponseState = () => {
-            const thisController = sessionAbortControllers.current.get(sessionId);
-            if (thisController === controller) {
-                sessionAbortControllers.current.delete(sessionId);
-                // Only update UI state if we're still on this session
-                if (currentSessionIdRef.current === sessionId) {
-                    setIsInternalProcessing(false);
-                    setIsTyping(false);
-                }
-            }
-        };
+
+        if (!sessionId || !userId) return;
 
         setIsInternalProcessing(true);
-        trackTelemetryEvent('ai.response.started', {
-            session_id: sessionId,
-            message_count: messagesRef.current.length
-        }, traceId);
 
         // [BACKGROUND RESPONSE] Register job with background manager
         // LivingPersona has core.name, regular persona in config may have name directly
@@ -730,7 +439,7 @@ export const useSendMessage = (
                 console.log(`[Context] Smart window: ${fullHistoryMessages.length} → ${historyMessages.length} (kept ${sampledMiddle.length} impactful from ${middle.length} middle)`);
             }
 
-            const history = services.geminiService.formatHistory(historyMessages);
+            const history = formatHistory(historyMessages);
 
             let promptText = "";
             if (contextMessages.length > 1) {
@@ -803,26 +512,11 @@ This is not a request for a summary. Give the user everything.`;
 
         const contextData = prepareContext();
         if (!contextData) {
-            finalizeResponseState();
+            setIsInternalProcessing(false);
             return;
         }
 
         markUserMessagesAsRead();
-
-        const geminiApiKey = await resolveGeminiApiKey();
-        if (!geminiApiKey) {
-            const errorMessage = 'Gemini key unavailable. Re-open BYOK setup and validate your key.';
-            bgResponseManager.errorResponse(sessionId, errorMessage);
-            trackTelemetryEvent('ai.response.failed', {
-                session_id: sessionId,
-                message: errorMessage
-            }, traceId);
-            if (!signal.aborted) {
-                addMessageToState('Your Gemini key is missing. Open BYOK settings and validate your key.', undefined, sessionId, undefined);
-            }
-            finalizeResponseState();
-            return;
-        }
 
         // 🔥 PARALLEL CONTEXT FETCHING - Run independent async operations together
         // Pattern from react-best-practices: async-parallel
@@ -834,7 +528,7 @@ This is not a request for a summary. Give the user everything.`;
             // Memory Retrieval
             (async () => {
                 try {
-                    const relevantMemories = await services.memoryService.searchMemories(
+                    const relevantMemories = await searchMemories(
                         userId,
                         contextData.promptText,
                         undefined,
@@ -854,7 +548,7 @@ This is not a request for a summary. Give the user everything.`;
             (async () => {
                 try {
                     if (contextData.totalMessageCount > HIERARCHICAL_THRESHOLD) {
-                        const hierarchical = await services.conversationSummarizer.buildHierarchicalContext(
+                        const hierarchical = await buildHierarchicalContext(
                             sessionId,
                             userId,
                             contextPersonaId,
@@ -885,7 +579,7 @@ This is not a request for a summary. Give the user everything.`;
             const isTired = currentHour >= 23 || currentHour < 6;
             const currentMood = agiLogic?.livingInstance?.personaState?.physicalState?.energyLevel < 0 ? 'tired' : 'neutral';
 
-            const attentionState = services.cognitiveArchitecture.applyAttentionFilter(contextData.promptText, {
+            const attentionState = applyAttentionFilter(contextData.promptText, {
                 currentCapacity: isTired ? 0.6 : 0.9,  // Reduced capacity when tired
                 emotionalBias: ['tired', 'upset', 'stressed'].includes(currentMood) ? 0.5 : 0.2,
                 currentMood
@@ -893,7 +587,7 @@ This is not a request for a summary. Give the user everything.`;
 
             // Generate context injection about what was focused on / missed
             if (attentionState.missedSegments.length > 0 || attentionState.misunderstoodSegments.length > 0) {
-                attentionContext = services.cognitiveArchitecture.generateAttentionContextInjection(attentionState);
+                attentionContext = generateAttentionContextInjection(attentionState);
                 console.log('[Cognitive] Attention filter applied:', {
                     processed: attentionState.processedSegments.length,
                     missed: attentionState.missedSegments.length
@@ -916,14 +610,14 @@ This is not a request for a summary. Give the user everything.`;
                 // 1. Initialize if needed
                 if (!currentState && userId) {
                     console.log('[AGI] Initializing consciousness for local session');
-                    currentState = services.agiConsciousness.initializeConsciousness(currentSessionIdRef.current);
+                    currentState = initializeConsciousness(currentSessionIdRef.current);
                     agiLogic.setAgiState(currentState);
                 }
 
                 // 2. Process AGI Consciousness (internal state update only)
                 if (currentState) {
                     const userText = contextData.contextMessages.map(m => m.text).join('\n');
-                    const updatedState = services.agiConsciousness.processInteraction(currentState, userText, 'neutral');
+                    const updatedState = processInteraction(currentState, userText, 'neutral');
                     agiLogic.setAgiState(updatedState);
                     if (agiLogic.saveAGIState) agiLogic.saveAGIState();
                     // NOTE: Omitting verbose consciousness context injection
@@ -931,7 +625,7 @@ This is not a request for a summary. Give the user everything.`;
 
                 // 3. Living Persona - ESSENTIAL MODIFIERS ONLY
                 if (currentLiving) {
-                    const lifeData = services.livingPersona.getLivingPersonaContext(currentLiving);
+                    const lifeData = getLivingPersonaContext(currentLiving);
                     const essentialModifiers: string[] = [];
 
                     // Only include the most impactful modifiers
@@ -961,318 +655,167 @@ This is not a request for a summary. Give the user everything.`;
         }
 
         // Inject memories, hierarchical context (for long convos), AND user prompt
-        const finalPromptText = `${memoryContext}${hierarchicalContext}${attentionContext ? `\n${attentionContext}\n` : '\n'}${contextData.promptText}`;
+        const finalPromptText = `${memoryContext}${hierarchicalContext}\n${contextData.promptText}`;
 
-        const latestUserMessage = contextData.contextMessages[contextData.contextMessages.length - 1];
+        let currentModel = currentConfig.model || 'gemini-3-pro-preview';
+        let retryCount = 0;
+        const maxRetries = 1;
 
-        // Pipeline-only path for all turns, including attachment turns.
-        if (!latestUserMessage) {
-            const pipelineErrorMessage = 'No user message available for pipeline execution.';
-            bgResponseManager.errorResponse(sessionId, pipelineErrorMessage);
-            trackTelemetryEvent('ai.response.failed', {
-                session_id: sessionId,
-                message: pipelineErrorMessage,
-                pipeline: true
-            }, traceId);
-            finalizeResponseState();
-            return;
-        }
-
-        try {
-                const { createPipelineOrchestrator } = await loadPipelineRuntimeModules();
-                const pluginRuntime = await loadPluginRuntimeModules();
-                const availablePluginTools = pluginRuntime
-                    .listPluginTools()
-                    .map((entry) => `${entry.pluginId}.${entry.tool.id}`);
-                const orchestrator = createPipelineOrchestrator();
-
-                const pipelineResult = await orchestrator.run({
-                    threadId: sessionId,
-                    userId,
-                    personaId: contextPersonaId,
-                    userMessage: latestUserMessage,
-                    timestamp: latestUserMessage.timestamp || Date.now(),
-                    abortSignal: signal,
-                    provider: 'gemini',
-                    model: currentConfig.model || 'gemini-2.5-flash',
-                    apiKey: geminiApiKey,
-                    temperature: currentConfig.temperature,
-                    persona: toPipelinePersona(
-                        currentConfig.livingPersona,
-                        contextPersonaId,
-                        currentConfig.systemInstruction
-                    ),
-                    pluginTools: availablePluginTools.length > 0 ? {
-                        allowedToolIds: availablePluginTools,
-                        invoke: async (toolId, payload) => {
-                            const dotIndex = toolId.indexOf('.');
-                            if (dotIndex === -1) {
-                                return {
-                                    ok: false,
-                                    denied: true,
-                                    summary: `Invalid plugin tool id "${toolId}".`,
-                                };
-                            }
-
-                            const pluginId = toolId.slice(0, dotIndex);
-                            const pluginToolId = toolId.slice(dotIndex + 1);
-
-                            const outcome = await pluginRuntime.invokePluginTool({
-                                userId,
-                                pluginId,
-                                toolId: pluginToolId,
-                                toolPayload: payload,
-                            });
-
-                            if (outcome.decision.decision !== 'allow') {
-                                return {
-                                    ok: false,
-                                    denied: true,
-                                    summary: `Policy ${outcome.decision.decision}: ${outcome.decision.reason}`,
-                                };
-                            }
-
-                            return {
-                                ok: outcome.result?.ok ?? false,
-                                summary: outcome.result?.summary ?? 'Plugin tool executed with no summary.',
-                                data: outcome.result?.data,
-                            };
-                        },
-                    } : undefined,
-                }, {
-                    maxRetries: 1,
-                    retryDelayMs: 150,
-                });
-
-                if (pipelineResult.llm.cancelled || pipelineResult.llm.timedOut || pipelineResult.llm.text.trim().length === 0) {
-                    throw new Error('Pipeline produced no usable response payload.');
-                }
-
-                let chunkCount = 0;
-                for (const chunk of pipelineResult.llm.chunks) {
-                    if (!chunk.text) continue;
-                    chunkCount += 1;
-                    if (chunkCount % 10 === 0) {
-                        trackTelemetryEvent('ai.response.chunk', {
-                            session_id: sessionId,
-                            chunk_count: chunkCount
-                        }, traceId);
-                    }
-                    bgResponseManager.addChunk(sessionId, chunk.text);
-                }
-
-                const strategicDelayMs = pipelineResult.humanized.strategicNonResponse.shouldDelay
-                    ? pipelineResult.humanized.strategicNonResponse.delayMs
-                    : 0;
-                if (strategicDelayMs > 0) {
-                    await delay(strategicDelayMs);
-                }
-
-                if (isShadowModeEnabled()) {
-                    recordShadowTrace({
-                        traceId,
-                        sessionId,
-                        userMessageId: latestUserMessage.id,
-                        assistantMessageIds: [],
-                        createdAtIso: new Date().toISOString(),
-                        model: pipelineResult.llm.model,
-                        provider: pipelineResult.llm.providerId,
-                        promptPreview: (pipelineResult.prompt.systemInstruction || '').slice(0, 480),
-                        emotionalSummary: `${pipelineResult.emotional.surface.label} (${pipelineResult.emotional.surface.intensity.toFixed(2)})`,
-                        memoryIds: pipelineResult.context.memories.map((memory) => memory.id),
-                        stages: [
-                            {
-                                id: 'contextGatherer',
-                                summary: `Retrieved ${pipelineResult.context.memories.length} memory hit(s).`,
-                                detail: `Relationship stage: ${pipelineResult.context.relationship.stage}`,
-                            },
-                            {
-                                id: 'identityResolver',
-                                summary: `Identity variant ${pipelineResult.identity.variant} (${pipelineResult.identity.confidence.toFixed(2)}).`,
-                            },
-                            {
-                                id: 'emotionalProcessor',
-                                summary: `Surface emotion ${pipelineResult.emotional.surface.label}.`,
-                                detail: pipelineResult.emotional.surface.rationale,
-                            },
-                            {
-                                id: 'promptBuilder',
-                                summary: `Prompt tiers estimated tokens: ${pipelineResult.prompt.tiers.estimatedTokens}.`,
-                            },
-                            {
-                                id: 'llmCaller',
-                                summary: `Provider ${pipelineResult.llm.providerId} model ${pipelineResult.llm.model}.`,
-                            },
-                            {
-                                id: 'learner',
-                                summary: `Extracted ${pipelineResult.learner.extractedMemories.length} memory update(s).`,
-                            },
-                        ],
-                    });
-                }
-
-                playbackQueueRef.current = playbackQueueRef.current
-                    .then(() => executePipelineMessages(
-                        pipelineResult.humanized.messages,
-                        sessionId,
-                        contextData.lastUserMessageId,
-                        signal,
-                        traceId
-                    ))
-                    .catch((error) => console.error('Pipeline playback queue recovered from error:', error));
-
-                await playbackQueueRef.current;
-                if (signal.aborted) {
-                    finalizeResponseState();
-                    return;
-                }
-
-                bgResponseManager.completeResponse(sessionId);
-                trackTelemetryEvent('ai.response.completed', {
-                    session_id: sessionId,
-                    output_chars: pipelineResult.llm.text.length,
-                    chunk_count: Math.max(chunkCount, pipelineResult.humanized.messages.length),
-                    pipeline: true
-                }, traceId);
-                finalizeResponseState();
-                return;
-        } catch (pipelineError) {
-            const pipelineErrorMessage = 'I hit an internal pipeline error. Please retry your message.';
-            console.error('[Pipeline] Response generation failed:', pipelineError);
-            bgResponseManager.errorResponse(sessionId, pipelineErrorMessage);
-            trackTelemetryEvent('ai.response.failed', {
-                session_id: sessionId,
-                message: pipelineError instanceof Error ? pipelineError.message : 'unknown',
-                pipeline: true
-            }, traceId);
-            if (!signal.aborted) {
-                addMessageToState(pipelineErrorMessage, undefined, sessionId, undefined);
-            }
-            finalizeResponseState();
-            return;
-        }
-
-    };
-
-    const flushQueuedMessagesForActiveSession = useCallback(async () => {
-        if (typeof navigator === 'undefined' || !navigator.onLine) return;
-
-        const activeSessionId = currentSessionIdRef.current;
-        if (!activeSessionId) return;
-
-        const queuedMessages = listQueuedMessages(activeSessionId);
-        if (queuedMessages.length === 0) return;
-
-        const services = await loadRuntimeServiceModules();
-
-        for (const queued of queuedMessages) {
-            const traceId = queued.traceId || createTraceId('msg');
+        while (retryCount <= maxRetries) {
             try {
-                const normalizedAttachments = await Promise.all(
-                    (queued.message.attachments || []).map(async (attachment) => {
-                        if (isRemoteHttpUrl(attachment.url)) {
-                            return attachment;
-                        }
+                if (signal.aborted) return;
 
-                        const recoveredFile = attachmentToFile(attachment);
-                        if (!recoveredFile) {
-                            if (attachment.url?.startsWith('data:')) {
-                                return attachment;
-                            }
-                            throw new Error(`Attachment payload missing for ${attachment.metadata?.name || attachment.id}`);
-                        }
-
-                        const uploadedUrl = await services.geminiService.uploadFileToStorage(
-                            recoveredFile,
-                            'chat-assets',
-                            undefined,
-                            queued.userId
-                        );
-                        if (!uploadedUrl) {
-                            throw new Error(`Attachment upload failed for ${attachment.metadata?.name || attachment.id}`);
-                        }
-
-                        return {
-                            ...attachment,
-                            url: uploadedUrl,
-                        };
-                    })
-                );
-
-                const queuedMessage: Message = {
-                    ...queued.message,
-                    attachments: normalizedAttachments,
-                    status: 'sent'
+                const attemptConfig = {
+                    ...currentConfig,
+                    model: currentModel,
+                    agiContext: agiContextInjection // AGI & Life Context injected here
                 };
 
-                await persistMessageToChat(queued.sessionId, queuedMessage);
-                setMessages(prev => {
-                    const exists = prev.some((message) => message.id === queuedMessage.id);
-                    const nextState = !exists
-                        ? [...prev, queuedMessage]
-                        : prev.map((message) => (
-                            message.id === queuedMessage.id
-                                ? { ...message, ...queuedMessage, status: 'sent' }
-                                : message
-                        ));
-                    messagesRef.current = nextState;
-                    return nextState;
-                });
-                removeQueuedMessage(queued.queueId);
+                // SOTA Token Optimization: Use cached session
+                const { chat: chatSession, fromCache } = await getOrCreateChatSession(
+                    sessionId, // conversationId
+                    attemptConfig,
+                    contextData.history
+                );
 
-                trackTelemetryEvent('message.user.flushed_from_queue', {
-                    session_id: queued.sessionId,
-                    message_id: queuedMessage.id,
-                    attachment_count: queuedMessage.attachments?.length || 0
-                }, traceId);
+                if (fromCache) {
+                    console.log('[TokenOpt] Session reused - saved ~5K tokens');
+                } else {
+                    console.log('[TokenOpt] New session created and cached');
+                }
 
-                setTimeout(() => {
-                    updateLocalMessageStatus(queuedMessage.id, 'delivered');
-                }, 350);
+                let fullResponseBuffer = "";
+                let generatedImageUrl = "";
+                let generatedCaption = "";
+                let preText: string | undefined = undefined;
 
-                pendingProcessingTimeout.current = setTimeout(() => {
-                    processAIResponse({
-                        sessionId: queued.sessionId,
-                        traceId
-                    });
-                }, 900);
-            } catch (error) {
-                updateQueuedMessage(queued.queueId, (existing) => ({
-                    ...existing,
-                    attempts: existing.attempts + 1,
-                    lastError: error instanceof Error ? error.message : 'Unknown flush failure'
-                }));
+                await sendMessageStream(
+                    chatSession,
+                    finalPromptText, // Use prompt with memories
+                    contextData.contextMessages.flatMap(m => m.attachments || []),
+                    (chunk) => {
+                        fullResponseBuffer += chunk;
+                        // [BACKGROUND RESPONSE] Add chunk to background manager
+                        bgResponseManager.addChunk(sessionId, chunk);
+                    },
+                    async () => {
+                        // [CRITICAL FIX] Sanitize AI response to remove AI patterns
+                        const sanitized = sanitizeResponse(fullResponseBuffer);
+                        const { hasForbidden, detected } = detectForbiddenPatterns(fullResponseBuffer);
+                        if (hasForbidden) {
+                            console.warn('[Sanitize] Removed AI patterns:', detected);
+                        }
 
-                trackTelemetryEvent('message.user.flush_failed', {
-                    session_id: queued.sessionId,
-                    queue_id: queued.queueId,
-                    message: error instanceof Error ? error.message : 'unknown error'
-                }, traceId);
+                        // [INTEGRATION] Memory Extraction (Prompt E1)
+                        if (userId) {
+                            const interactionForMemory = [
+                                ...contextData.contextMessages,
+                                { role: 'model', text: sanitized, id: uuidv4(), timestamp: Date.now() } as Message
+                            ];
+                            // Fire and forget extraction
+                            extractMemoryFromConversation(userId, interactionForMemory)
+                                .catch(e => console.error("Memory extraction failed", e));
+
+                            // [NEW] Update relationship state
+                            const personaId = currentConfig.livingPersona?.id || (currentConfig as any).personaId || 'default';
+                            extractRelationshipUpdates(userId, personaId, interactionForMemory)
+                                .catch(e => console.error("Relationship update failed", e));
+                        }
+
+                        // [INTEGRATION] Update Living Persona State (Prompt E5)
+                        if (agiLogic && agiLogic.livingInstance && agiLogic.setLivingInstance) {
+                            // Update trust, relationship stage, and life events based on this interaction
+                            const updatedInstance = processLivingInteraction(
+                                agiLogic.livingInstance,
+                                contextData.promptText,
+                                sanitized
+                            );
+                            agiLogic.setLivingInstance(updatedInstance);
+                        }
+
+                        const allHistoryForAnalysis = [...messagesRef.current, ...contextData.contextMessages];
+                        const moodAnalysis = analyzeMoodFromConversation(allHistoryForAnalysis);
+
+                        const mappedMood = ['sad', 'angry', 'serious'].includes(moodAnalysis.mood)
+                            ? 'upset'
+                            : (['tired'].includes(moodAnalysis.mood) ? 'tired' : (moodAnalysis.mood === 'excited' ? 'excited' : 'normal'));
+
+                        const mappedVibe = moodAnalysis.personaVibe === 'chaotic'
+                            ? 'chaotic'
+                            : (moodAnalysis.personaVibe === 'formal' ? 'formal' : 'casual');
+
+                        const personaContext = getPersonaContext(currentConfig.livingPersona);
+
+                        const plan = createHumanResponsePlan(
+                            sanitized, // Use sanitized response instead of raw
+                            contextData.userContentLength,
+                            messagesRef.current, // PASS FULL HISTORY for abbreviation learning
+                            contextData.totalMessageCount,
+                            contextData.firstMessageTime,
+                            {
+                                personaVibe: mappedVibe,
+                                mood: mappedMood,
+                                enableInterruptions: true,
+                                personaContext
+                            }
+                        );
+
+                        // Use playback queue to prevent overlapping messages
+                        playbackQueueRef.current = playbackQueueRef.current
+                            .then(() => executeMessagePlan(plan, generatedImageUrl, generatedCaption, preText, sessionId, contextData.lastUserMessageId, signal))
+                            .catch(err => console.error("Playback queue error recovered:", err));
+                    },
+                    attemptConfig,
+                    signal,
+                    (url, caption, pt) => {
+                        generatedImageUrl = url;
+                        generatedCaption = caption;
+                        preText = pt;
+                    },
+                    undefined,
+                    () => { },
+                    contextData.contextMessages
+                );
+
+                // [BACKGROUND RESPONSE] Mark job complete
+                bgResponseManager.completeResponse(sessionId);
+                break;
+
+            } catch (e: any) {
+                if (e.name === 'AbortError' || e.message === 'Aborted') {
+                    console.log('AI Response interrupted by user.');
+                    break;
+                }
+                if (modelManager.isQuotaError(e)) {
+                    console.warn(`[Quota Hit] Model ${currentModel} exhausted.`);
+                    if (retryCount < maxRetries) {
+                        currentModel = 'gemini-3-flash-preview';
+                        retryCount++;
+                        continue;
+                    }
+                }
+                console.error(e);
+                if (!signal.aborted) {
+                    addMessageToState("Sorry, I encountered an error.", undefined, sessionId, undefined);
+                }
+                break;
             }
         }
-    }, [persistMessageToChat, updateLocalMessageStatus]);
 
-    useEffect(() => {
-        const flush = () => {
-            offlineFlushQueueRef.current = offlineFlushQueueRef.current
-                .then(() => flushQueuedMessagesForActiveSession())
-                .catch((error) => {
-                    console.error('[OfflineQueue] Flush failed:', error);
-                });
-        };
-
-        flush();
-        window.addEventListener('online', flush);
-
-        return () => {
-            window.removeEventListener('online', flush);
-        };
-    }, [currentSessionId, flushQueuedMessagesForActiveSession]);
+        // Clean up this session's abort controller
+        const thisController = sessionAbortControllers.current.get(sessionId);
+        if (thisController === controller) {
+            sessionAbortControllers.current.delete(sessionId);
+            // Only update UI state if we're still on this session
+            if (currentSessionIdRef.current === sessionId) {
+                setIsInternalProcessing(false);
+                setIsTyping(false);
+            }
+        }
+    };
 
     const sendMessage = async (text: string, replyToId?: string) => {
         if ((!text.trim() && attachments.length === 0) || !currentSessionId || !session?.user?.id) return;
-        const traceId = createTraceId('msg');
-        const isOnline = typeof navigator === 'undefined' ? true : navigator.onLine;
 
         // INTERRUPTION: Cancel any ongoing AI activity for THIS SESSION ONLY
         // Other sessions' responses should continue in background
@@ -1293,83 +836,47 @@ This is not a request for a summary. Give the user everything.`;
             role: 'user',
             text: text,
             timestamp: Date.now(),
-            attachments,
+            attachments: attachments,
             replyToId,
-            status: isOnline ? 'sent' : 'queued'
+            status: 'sent'
         };
 
         localMessageIdsRef.current.add(userMessage.id);
 
-        if (!isOnline) {
-            setMessages(prev => {
-                const nextState = [...prev, userMessage];
-                messagesRef.current = nextState;
-                return nextState;
-            });
-            enqueueMessage({
-                queueId: userMessage.id,
-                sessionId: currentSessionId,
-                userId: session.user.id,
-                message: userMessage,
-                traceId,
-                enqueuedAtIso: new Date().toISOString(),
-                attempts: 0
-            });
-            setInputText('');
-            setAttachments([]);
-
-            trackTelemetryEvent('message.user.queued_offline', {
-                session_id: currentSessionId,
-                message_id: userMessage.id,
-                attachment_count: userMessage.attachments?.length || 0
-            }, traceId);
-            return;
-        }
-
-        trackTelemetryEvent('message.user.sent', {
-            session_id: currentSessionId,
-            message_id: userMessage.id,
-            attachment_count: userMessage.attachments?.length || 0
-        }, traceId);
-
-        let persistedState: Message[] = [];
         setMessages(prev => {
             const newState = [...prev, userMessage];
             messagesRef.current = newState;
-            persistedState = newState;
+
+            supabase.from('chats').update({
+                messages: newState,
+                updated_at: new Date().toISOString()
+            }).eq('id', currentSessionId).then();
+
             return newState;
         });
-        if (persistedState.length > 0) {
-            void messageRepository.upsertMessage(currentSessionId, userMessage).catch((error) => {
-                console.error('[SendMessage] Failed to persist user message:', error);
-            });
-        }
 
         setInputText('');
         setAttachments([]);
 
         setTimeout(() => {
-            let updatedSnapshot: Message[] = [];
             setMessages(prev => {
                 const updated = prev.map(m => m.id === userMessage.id ? { ...m, status: 'delivered' as const } : m);
-                updatedSnapshot = updated;
+
+                // [SYNC] Persist delivered status
+                if (currentSessionIdRef.current) {
+                    supabase.from('chats')
+                        .update({ messages: updated })
+                        .eq('id', currentSessionIdRef.current)
+                        .then();
+                }
+
                 return updated;
             });
-            if (currentSessionIdRef.current && updatedSnapshot.length > 0) {
-                const deliveredMessage = updatedSnapshot.find((message) => message.id === userMessage.id);
-                if (!deliveredMessage) return;
-                void messageRepository
-                    .upsertMessage(currentSessionIdRef.current, deliveredMessage, { touchUpdatedAt: false })
-                    .catch((error) => {
-                        console.error('[SendMessage] Failed to persist delivered status:', error);
-                    });
-            }
         }, 600);
 
         // Debounce & Trigger AI Response with Context Capture (PROMPT F4)
         const contextSnapshot = {
             sessionId: currentSessionId,
-            traceId
         };
 
         pendingProcessingTimeout.current = setTimeout(() => {
@@ -1379,16 +886,6 @@ This is not a request for a summary. Give the user everything.`;
 
     const sendVoiceMessage = async (audioBlob: Blob, duration: number) => {
         if (!currentSessionId || !session?.user?.id) return;
-        const traceId = createTraceId('msg');
-        const geminiApiKey = await resolveGeminiApiKey();
-        if (!geminiApiKey) {
-            trackTelemetryEvent('message.voice.failed', {
-                session_id: currentSessionId,
-                reason: 'missing_byok_key'
-            }, traceId);
-            return;
-        }
-        const services = await loadRuntimeServiceModules();
 
         const tempId = uuidv4();
         const localUrl = URL.createObjectURL(audioBlob);
@@ -1410,24 +907,20 @@ This is not a request for a summary. Give the user everything.`;
         };
 
         localMessageIdsRef.current.add(tempId);
-        setMessages(prev => {
-            const nextState = [...prev, optimisticMessage];
-            messagesRef.current = nextState;
-            return nextState;
-        });
+        setMessages(prev => [...prev, optimisticMessage]);
 
         try {
             // 2. Parallel Processing: Upload & Transcribe
             const file = new File([audioBlob], `voice_${Date.now()}.webm`, { type: audioBlob.type });
 
-            const uploadPromise = services.geminiService.uploadFileToStorage(file, 'chat-assets', undefined, session.user.id);
+            const uploadPromise = uploadFileToStorage(file, 'chat-assets', undefined, session.user.id);
 
             const transcriptPromise = new Promise<string>((resolve) => {
                 const reader = new FileReader();
                 reader.readAsDataURL(audioBlob);
                 reader.onloadend = async () => {
                     const base64 = (reader.result as string).split(',')[1];
-                    const text = await services.geminiService.transcribeAudio(base64, audioBlob.type);
+                    const text = await transcribeAudio(base64, audioBlob.type);
                     resolve(text);
                 };
             });
@@ -1437,21 +930,17 @@ This is not a request for a summary. Give the user everything.`;
             if (!storageUrl) throw new Error("Voice message upload failed");
 
             // 3. Update Local State with Final Data
-            setMessages(prev => {
-                const nextState = prev.map(m => {
-                    if (m.id === tempId) {
-                        return {
-                            ...m,
-                            text: transcript || "", // Stored but hidden in UI
-                            attachments: m.attachments?.map(a => ({ ...a, url: storageUrl })), // Switch to persistent URL
-                            status: 'sent'
-                        };
-                    }
-                    return m;
-                });
-                messagesRef.current = nextState;
-                return nextState;
-            });
+            setMessages(prev => prev.map(m => {
+                if (m.id === tempId) {
+                    return {
+                        ...m,
+                        text: transcript || "", // Stored but hidden in UI
+                        attachments: m.attachments?.map(a => ({ ...a, url: storageUrl })), // Switch to persistent URL
+                        status: 'sent'
+                    };
+                }
+                return m;
+            }));
 
             // 4. Persist to DB
             const finalMessage = {
@@ -1461,29 +950,35 @@ This is not a request for a summary. Give the user everything.`;
                 status: 'sent'
             };
 
-            await messageRepository.upsertMessage(currentSessionId, finalMessage as Message);
+            // Fetch latest history to append safely
+            const { data: chatData } = await supabase
+                .from('chats')
+                .select('messages')
+                .eq('id', currentSessionId)
+                .single();
+
+            if (chatData) {
+                const updatedHistory = [...(chatData.messages || []), finalMessage];
+                await supabase
+                    .from('chats')
+                    .update({
+                        messages: updatedHistory,
+                        updated_at: new Date().toISOString()
+                    })
+                    .eq('id', currentSessionId);
+            }
 
             // 5. Trigger AI Response
             const contextSnapshot = {
                 sessionId: currentSessionId,
-                traceId
             };
-            trackTelemetryEvent('message.user.sent', {
-                session_id: currentSessionId,
-                message_id: tempId,
-                voice: true
-            }, traceId);
             pendingProcessingTimeout.current = setTimeout(() => {
                 processAIResponse(contextSnapshot);
             }, 1000);
 
         } catch (e) {
             console.error("Failed to send voice message", e);
-            setMessages(prev => {
-                const nextState = prev.map(m => m.id === tempId ? { ...m, status: 'error' } : m);
-                messagesRef.current = nextState;
-                return nextState;
-            });
+            setMessages(prev => prev.map(m => m.id === tempId ? { ...m, status: 'error' } : m));
         }
     };
 

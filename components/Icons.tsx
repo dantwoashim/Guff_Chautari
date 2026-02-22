@@ -9,6 +9,7 @@ export {
   PanelLeft,
   Plus,
   Sparkles,
+  Compass,
   Loader2,
   GitBranch,
   Paperclip,
@@ -48,6 +49,7 @@ export {
   Zap,
   Clock,
   Activity,
+  Briefcase,
   Target,
   ShieldAlert,
   History,
@@ -124,7 +126,8 @@ export {
   ToggleRight,
   Edit,
   CheckCircle,
-  Clipboard
+  Clipboard,
+  Command
 } from 'lucide-react';
 
 import React from 'react';

@@ -14,7 +14,6 @@
 
 import { supabase } from '../lib/supabase';
 import {
-
     initializeQuantumState,
     collapseWaveFunction,
     getActivefragment,
@@ -37,8 +36,6 @@ import {
     getMetaSentienceModifier,
     MetaSentienceState
 } from './metaSentience';
-
-const supabaseDb = supabase;
 
 // =====================================================
 // TYPES
@@ -129,7 +126,7 @@ export async function saveConsciousnessState(
 
     // Try to match based on user_id + persona_id if possible
     // Note: This relies on the DB having a constraint or index that allows conflict resolution
-    const { error } = await supabaseDb
+    const { error } = await supabase
         .from('persona_consciousness')
         .upsert(payload, { onConflict: 'user_id,persona_id' as any }); // Optimistic conflict target
     
@@ -147,7 +144,7 @@ export async function loadConsciousnessState(
     
     if (!validPersonaId) return null;
 
-    const { data, error } = await supabaseDb
+    const { data, error } = await supabase
         .from('persona_consciousness')
         .select('*')
         .eq('user_id', userId)

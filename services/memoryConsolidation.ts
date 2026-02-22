@@ -15,8 +15,6 @@ import { Memory, MemoryType } from "../types";
 import { generateEmbedding, calculateSimilarity, addToShortTermCache, MEMORY_TIERS } from "./memoryService";
 import { decayEntityFacts } from "./entityMemory";
 
-const supabaseDb = supabase;
-
 // ==========================================
 // CONFIGURATION
 // ==========================================
@@ -88,25 +86,23 @@ export async function consolidateUserMemories(userId: string): Promise<{
  * Memories that aren't accessed lose relevance
  */
 async function decayOldMemories(userId: string): Promise<number> {
-    const nowMs = Date.now();
+    const now = Date.now();
     const interval = CONSOLIDATION_CONFIG.decayIntervalDays * 24 * 60 * 60 * 1000;
-    const cutoffIso = new Date(nowMs - interval).toISOString();
+    const cutoff = now - interval;
 
     // Get memories that haven't been accessed recently
-    const { data: oldMemories, error } = await supabaseDb
+    const { data: oldMemories, error } = await supabase
         .from('memories')
         .select('id, decay_factor, last_accessed, created_at')
         .eq('user_id', userId)
-        .lt('last_accessed', cutoffIso)
+        .lt('last_accessed', cutoff)
         .gt('decay_factor', CONSOLIDATION_CONFIG.archiveThreshold);
 
     if (error || !oldMemories) return 0;
 
     let decayed = 0;
     for (const memory of oldMemories) {
-        const lastAccessMs = Date.parse(memory.last_accessed || memory.created_at);
-        if (Number.isNaN(lastAccessMs)) continue;
-        const daysSinceAccess = (nowMs - lastAccessMs) / (24 * 60 * 60 * 1000);
+        const daysSinceAccess = (now - (memory.last_accessed || memory.created_at)) / (24 * 60 * 60 * 1000);
         const intervals = Math.floor(daysSinceAccess / CONSOLIDATION_CONFIG.decayIntervalDays);
         const newDecay = Math.max(
             CONSOLIDATION_CONFIG.archiveThreshold,
@@ -114,7 +110,7 @@ async function decayOldMemories(userId: string): Promise<number> {
         );
 
         if (newDecay !== memory.decay_factor) {
-            await supabaseDb
+            await supabase
                 .from('memories')
                 .update({ decay_factor: newDecay })
                 .eq('id', memory.id);
@@ -131,7 +127,7 @@ async function decayOldMemories(userId: string): Promise<number> {
  */
 async function mergeSimilarMemories(userId: string): Promise<number> {
     // Get recent memories with embeddings
-    const { data: memories, error } = await supabaseDb
+    const { data: memories, error } = await supabase
         .from('memories')
         .select('*')
         .eq('user_id', userId)
@@ -177,7 +173,7 @@ async function mergeSimilarMemories(userId: string): Promise<number> {
 
     // Apply updates
     for (const update of toUpdate) {
-        await supabaseDb
+        await supabase
             .from('memories')
             .update({ decay_factor: update.newDecay })
             .eq('id', update.id);
@@ -185,7 +181,7 @@ async function mergeSimilarMemories(userId: string): Promise<number> {
 
     // Delete merged duplicates
     if (toDelete.length > 0) {
-        await supabaseDb
+        await supabase
             .from('memories')
             .delete()
             .in('id', toDelete);
@@ -199,7 +195,7 @@ async function mergeSimilarMemories(userId: string): Promise<number> {
  * Updates type and boosts confidence
  */
 async function promoteImportantMemories(userId: string): Promise<number> {
-    const { data: memories, error } = await supabaseDb
+    const { data: memories, error } = await supabase
         .from('memories')
         .select('*')
         .eq('user_id', userId)
@@ -216,7 +212,7 @@ async function promoteImportantMemories(userId: string): Promise<number> {
             newDecay = Math.min(1, newDecay + CONSOLIDATION_CONFIG.emotionalBoost);
         }
 
-        await supabaseDb
+        await supabase
             .from('memories')
             .update({
                 type: 'semantic', // Promote to long-term semantic
@@ -235,7 +231,7 @@ async function promoteImportantMemories(userId: string): Promise<number> {
  * Keeps them but marks as archived
  */
 async function archiveLowConfidenceMemories(userId: string): Promise<number> {
-    const { data, error } = await supabaseDb
+    const { data, error } = await supabase
         .from('memories')
         .update({ archived: true })
         .eq('user_id', userId)

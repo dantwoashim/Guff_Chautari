@@ -110,7 +110,19 @@ class BackgroundResponseManager {
 
             this.notificationQueue.push(notification);
 
-            // Notify completion listeners
+            // SOTA: Push to Zustand store (single source of truth)
+            try {
+                // Dynamic import to avoid circular dependency issues
+                import('../stores/notificationStore').then(({ useNotificationStore }) => {
+                    useNotificationStore.getState().add(notification);
+                }).catch(() => {
+                    // Fallback: store not available, old listeners still work
+                });
+            } catch (e) {
+                // Silent fallback
+            }
+
+            // Notify completion listeners (legacy support)
             this.completionListeners.forEach(cb => cb(job, notification));
 
             console.log(`[BackgroundResponseManager] Completed job for ${job.personaName}`);

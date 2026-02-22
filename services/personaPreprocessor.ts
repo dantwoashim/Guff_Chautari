@@ -13,8 +13,6 @@ import { createDefaultSocialCircle, Person } from './socialCircle';
 import { generateGossip, Gossip } from './gossipGenerator';
 import { LivingPersona, Persona } from '../types';
 
-const supabaseDb = supabase;
-
 export interface ProcessingProgress {
   step: string;
   current: number;
@@ -71,7 +69,7 @@ export async function preprocessPersona(
 
   try {
     // Fetch the persona
-    const { data: persona, error: fetchError } = await supabaseDb
+    const { data: persona, error: fetchError } = await supabase
       .from('personas')
       .select('*')
       .eq('id', personaId)
@@ -208,7 +206,7 @@ export async function preprocessPersona(
 
     // Step 10: Save to Database
     updateProgress(9, 'processing');
-    const { error: updateError } = await supabaseDb
+    const { error: updateError } = await supabase
       .from('personas')
       .update({
         living_persona: results.living_persona,
@@ -252,7 +250,7 @@ export function needsReprocessing(persona: Persona & { processing_version?: stri
  * Get all global personas with their processing status
  */
 export async function getGlobalPersonasWithStatus(): Promise<any[]> {
-  const { data, error } = await supabaseDb
+  const { data, error } = await supabase
     .from('personas')
     .select('*')
     .eq('is_global', true)

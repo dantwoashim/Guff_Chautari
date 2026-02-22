@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { ChatConfig, Message, Attachment, ConversationTree, Persona, LivingPersona } from '../types';
+import { ChatConfig, Message, Attachment, ConversationTree, Persona, LivingPersona, AppViewId } from '../types';
 import { useConversationManager } from './useConversationManager';
 import { useSessionManager } from './useSessionManager';
 import { useMessages } from './chat/useMessages';
@@ -10,39 +10,30 @@ import { useAGI } from './chat/useAGI';
 import { useExternalMessageListener } from './useExternalMessageListener';
 import { useSpontaneousMessaging } from './useSpontaneousMessaging';
 import { branchingService } from '../services/branchingService';
-import { useAppStore } from '../src/store';
-import { messageRepository } from '../src/data/repositories';
 
 export const useChatLogic = () => {
-    // --- Auth & Session State (Zustand) ---
-    const session = useAppStore((state) => state.session);
-    const isAuthLoading = useAppStore((state) => state.isAuthLoading);
-    const setSession = useAppStore((state) => state.setSession);
-    const setIsAuthLoading = useAppStore((state) => state.setAuthLoading);
+    // --- Auth & Session State ---
+    const [session, setSession] = useState<any>(null);
+    const [isAuthLoading, setIsAuthLoading] = useState(true);
 
-    // --- UI State (Zustand) ---
-    const isSidebarOpen = useAppStore((state) => state.isSidebarOpen);
-    const isSettingsOpen = useAppStore((state) => state.isSettingsOpen);
-    const isNewChatModalOpen = useAppStore((state) => state.isNewChatModalOpen);
-    const isSessionModalOpen = useAppStore((state) => state.isSessionModalOpen);
-    const deleteModalState = useAppStore((state) => state.deleteModalState);
-    const showSqlSetup = useAppStore((state) => state.showSqlSetup);
-    const isDarkMode = useAppStore((state) => state.isDarkMode);
-    const isFullscreen = useAppStore((state) => state.isFullscreen);
-    const currentView = useAppStore((state) => state.currentView);
+    // --- UI State ---
+    const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+    const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+    const [isNewChatModalOpen, setIsNewChatModalOpen] = useState(false);
+    const [isSessionModalOpen, setIsSessionModalOpen] = useState(false);
+    const [deleteModalState, setDeleteModalState] = useState<{ isOpen: boolean; chatId: string | null }>({ isOpen: false, chatId: null });
+    const [showSqlSetup, setShowSqlSetup] = useState(false);
+    const [isDarkMode, setIsDarkMode] = useState(true);
+    const [isFullscreen, setIsFullscreen] = useState(false);
+    const [currentView, setCurrentView] = useState<AppViewId>('chat');
 
-    const setIsSidebarOpen = useAppStore((state) => state.setIsSidebarOpen);
-    const setIsSettingsOpen = useAppStore((state) => state.setIsSettingsOpen);
-    const setIsNewChatModalOpen = useAppStore((state) => state.setIsNewChatModalOpen);
-    const setIsSessionModalOpen = useAppStore((state) => state.setIsSessionModalOpen);
-    const setDeleteModalState = useAppStore((state) => state.setDeleteModalState);
-    const setShowSqlSetup = useAppStore((state) => state.setShowSqlSetup);
-    const setIsFullscreen = useAppStore((state) => state.setIsFullscreen);
-    const setCurrentView = useAppStore((state) => state.setCurrentView);
-    const setActivePersonaId = useAppStore((state) => state.setActivePersonaId);
-    const config = useAppStore((state) => state.chatConfig);
-    const setConfig = useAppStore((state) => state.setChatConfig);
-    const patchConfig = useAppStore((state) => state.patchChatConfig);
+    // --- Config State ---
+    const [config, setConfig] = useState<ChatConfig>({
+        systemInstruction: "",
+        model: 'gemini-3-pro-preview',
+        thinkingBudget: 5,
+        temperature: 0.7
+    });
 
     // --- Initialize Auth ---
     useEffect(() => {
@@ -93,7 +84,7 @@ export const useChatLogic = () => {
         messages,
         setMessages,
         messagesEndRef
-    } = useMessages(currentSessionId || null);
+    } = useMessages();
 
     // Load Messages when Session Changes
     useEffect(() => {
@@ -102,8 +93,8 @@ export const useChatLogic = () => {
             return;
         }
         const load = async () => {
-            const storedMessages = await messageRepository.getMessages(currentSessionId);
-            setMessages(storedMessages);
+            const { data } = await supabase.from('chats').select('messages').eq('id', currentSessionId).maybeSingle();
+            if (data) setMessages(data.messages || []);
         };
         load();
     }, [currentSessionId, setMessages]);
@@ -114,8 +105,10 @@ export const useChatLogic = () => {
         if (!targetId) return;
 
         console.log('[ChatLogic] Refreshing messages for session:', targetId);
-        const storedMessages = await messageRepository.getMessages(targetId);
-        setMessages(storedMessages);
+        const { data } = await supabase.from('chats').select('messages').eq('id', targetId).maybeSingle();
+        if (data) {
+            setMessages(data.messages || []);
+        }
     }, [currentSessionId, setMessages]);
 
     // --- Persona Logic ---
@@ -128,27 +121,26 @@ export const useChatLogic = () => {
 
             const conversation = conversationManager.conversations.find(c => c.id === currentSessionId);
             if (conversation?.persona_id) {
-                setActivePersonaId(conversation.persona_id);
                 // Try to get from cache or process
                 const persona = sessionManager.getPersona(conversation.persona_id)
                     || await sessionManager.processAndCachePersona(conversation.persona_id);
 
                 if (persona) {
-                    patchConfig({
+                    setConfig(prev => ({
+                        ...prev,
                         personaId: conversation.persona_id, // [FIX] For per-persona reference images
                         livingPersona: persona,
                         personaAvatarUrl: conversation.persona?.avatar_url, // For notifications
-                        systemInstruction: persona.compiledPrompt || config.systemInstruction
-                    });
+                        systemInstruction: persona.compiledPrompt || prev.systemInstruction
+                    }));
                 }
             } else {
                 // No persona (default chat)
-                setActivePersonaId(null);
-                patchConfig({ livingPersona: undefined });
+                setConfig(prev => ({ ...prev, livingPersona: undefined }));
             }
         };
         loadPersona();
-    }, [currentSessionId, conversationManager.conversations, sessionManager, session?.user?.id, setActivePersonaId, patchConfig, config.systemInstruction]);
+    }, [currentSessionId, conversationManager.conversations, sessionManager, session?.user?.id]);
 
     // --- AGI Logic ---
     const agiLogic = useAGI(session, currentSessionId, config);
@@ -270,7 +262,10 @@ export const useChatLogic = () => {
             setMessages(truncatedMessages);
 
             // 3. Save truncated messages to DB immediately
-            await messageRepository.saveMessages(currentSessionId, truncatedMessages);
+            await supabase.from('chats').update({
+                messages: truncatedMessages,
+                updated_at: new Date().toISOString()
+            }).eq('id', currentSessionId);
 
             // 4. Refresh branch tree
             branchingService.getBranchTree(currentSessionId).then(setBranchTree).catch(() => { });
@@ -306,7 +301,7 @@ export const useChatLogic = () => {
 
     const handleSaveConfig = useCallback((newConfig: ChatConfig) => {
         setConfig(newConfig);
-    }, [setConfig]);
+    }, []);
 
     return {
         state: {

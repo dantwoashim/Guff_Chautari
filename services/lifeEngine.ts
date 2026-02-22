@@ -565,5 +565,4 @@ export function generateDayStory(timeline: DayTimeline): string {
 // EXPORTS
 // =====================================================
 
-export type { PersonaProfile };
-export { EVENT_TEMPLATES };
+export { PersonaProfile, EVENT_TEMPLATES };

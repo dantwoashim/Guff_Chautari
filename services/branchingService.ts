@@ -2,7 +2,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { supabase } from "../lib/supabase";
 import {
-
   ConversationBranch,
   ConversationTree,
   Message,
@@ -10,13 +9,10 @@ import {
 } from "../types";
 import { v4 as uuidv4 } from 'uuid';
 import { modelManager } from "./modelManager";
-import { resolveGeminiApiKey } from "../lib/env";
-
-const supabaseDb = supabase;
 
 // Safe lazy initialization
 const getAiClient = () => {
-  const apiKey = resolveGeminiApiKey();
+  const apiKey = (typeof process !== 'undefined' && process.env) ? process.env.API_KEY : '';
   return new GoogleGenAI({ apiKey: apiKey || '' });
 };
 
@@ -33,7 +29,7 @@ export const branchingService = {
     label: string = "New Timeline"
   ): Promise<ConversationBranch> {
 
-    const { count } = await supabaseDb
+    const { count } = await supabase
       .from('conversation_branches')
       .select('*', { count: 'exact', head: true })
       .eq('session_id', sessionId);
@@ -41,7 +37,7 @@ export const branchingService = {
     let actualParentId = parentBranchId;
 
     if (count === 0) {
-      const { data: chatData } = await supabaseDb
+      const { data: chatData } = await supabase
         .from('chats')
         .select('messages')
         .eq('id', sessionId)
@@ -59,7 +55,7 @@ export const branchingService = {
         createdAt: Date.now()
       };
 
-      await supabaseDb.from('conversation_branches').insert({
+      await supabase.from('conversation_branches').insert({
         id: rootBranch.id,
         session_id: sessionId,
         fork_point: 0,
@@ -73,7 +69,7 @@ export const branchingService = {
 
     let parentMessages: Message[] = [];
     if (actualParentId) {
-      const { data } = await supabaseDb
+      const { data } = await supabase
         .from('conversation_branches')
         .select('messages')
         .eq('id', actualParentId)
@@ -93,7 +89,7 @@ export const branchingService = {
       createdAt: Date.now()
     };
 
-    const { error } = await supabaseDb.from('conversation_branches').insert({
+    const { error } = await supabase.from('conversation_branches').insert({
       id: newBranch.id,
       session_id: sessionId,
       parent_branch_id: newBranch.parentId,
@@ -108,7 +104,7 @@ export const branchingService = {
   },
 
   async deleteBranch(branchId: string): Promise<void> {
-    const { error } = await supabaseDb
+    const { error } = await supabase
       .from('conversation_branches')
       .delete()
       .eq('id', branchId);
@@ -116,7 +112,7 @@ export const branchingService = {
   },
 
   async renameBranch(branchId: string, newLabel: string): Promise<void> {
-    const { error } = await supabaseDb
+    const { error } = await supabase
       .from('conversation_branches')
       .update({ label: newLabel })
       .eq('id', branchId);
@@ -124,7 +120,7 @@ export const branchingService = {
   },
 
   async getBranchTree(sessionId: string): Promise<ConversationTree> {
-    const { data, error } = await supabaseDb
+    const { data, error } = await supabase
       .from('conversation_branches')
       .select('*')
       .eq('session_id', sessionId)
@@ -157,8 +153,8 @@ export const branchingService = {
 
   async compareBranches(branchAId: string, branchBId: string): Promise<BranchComparison> {
     const ai = getAiClient();
-    const { data: bA } = await supabaseDb.from('conversation_branches').select('*').eq('id', branchAId).limit(1).maybeSingle();
-    const { data: bB } = await supabaseDb.from('conversation_branches').select('*').eq('id', branchBId).limit(1).maybeSingle();
+    const { data: bA } = await supabase.from('conversation_branches').select('*').eq('id', branchAId).limit(1).maybeSingle();
+    const { data: bB } = await supabase.from('conversation_branches').select('*').eq('id', branchBId).limit(1).maybeSingle();
 
     if (!bA || !bB) throw new Error("Branch not found");
 

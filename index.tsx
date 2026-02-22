@@ -3,8 +3,6 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import './index.css';
-import { registerServiceWorker } from './src/pwa/registerServiceWorker';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -19,9 +17,3 @@ root.render(
     </ErrorBoundary>
   </React.StrictMode>
 );
-
-if (typeof window !== 'undefined') {
-  window.addEventListener('load', () => {
-    void registerServiceWorker();
-  });
-}

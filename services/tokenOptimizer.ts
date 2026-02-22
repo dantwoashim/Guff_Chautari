@@ -15,7 +15,7 @@
 import { Message, LivingPersona, ChatConfig } from '../types';
 import { compressPersona, createMinimalPrompt, CompressedPersona } from './promptCompressor';
 import { buildSmartContext, formatContextForPrompt, SmartContext } from './smartContext';
-import { checkCache } from './responseCache';
+import { checkCache, needsAPICall, CacheResult } from './responseCache';
 import { getTimeContext, generateTimePromptInjection } from './timeContextService';
 
 // =====================================================
@@ -48,7 +48,6 @@ export interface OptimizationConfig {
     enableLengthControl: boolean;
     maxHistoryMessages: number;
     personaVibe: 'formal' | 'casual' | 'chaotic';
-    requestHasMedia?: boolean;
 }
 
 const DEFAULT_CONFIG: OptimizationConfig = {
@@ -79,7 +78,7 @@ export function optimizeRequest(
     // STEP 1: Check cache first (might skip API entirely!)
     // =====================================================
     if (cfg.enableCaching) {
-        const hasMedia = cfg.requestHasMedia ?? detectRequestMedia(userMessage, messages);
+        const hasMedia = false; // TODO: detect from message
         const cacheResult = checkCache(userMessage, hasMedia, { personaVibe: cfg.personaVibe });
 
         if (cacheResult.skipAPI && cacheResult.response) {
@@ -229,13 +228,8 @@ function estimateOriginalTokens(messages: Message[], persona: LivingPersona | nu
 /**
  * Quick check if we should call API
  */
-export function shouldCallAPI(
-    userMessage: string,
-    personaVibe: 'formal' | 'casual' | 'chaotic' = 'casual',
-    hasMedia: boolean = false
-): boolean {
-    const result = checkCache(userMessage, hasMedia, { personaVibe });
-    return !result.skipAPI;
+export function shouldCallAPI(userMessage: string, personaVibe: 'formal' | 'casual' | 'chaotic' = 'casual'): boolean {
+    return needsAPICall(userMessage, false);
 }
 
 /**
@@ -243,40 +237,10 @@ export function shouldCallAPI(
  */
 export function getCachedIfAvailable(
     userMessage: string,
-    personaVibe: 'formal' | 'casual' | 'chaotic' = 'casual',
-    hasMedia: boolean = false
+    personaVibe: 'formal' | 'casual' | 'chaotic' = 'casual'
 ): string | null {
-    const result = checkCache(userMessage, hasMedia, { personaVibe });
+    const result = checkCache(userMessage, false, { personaVibe });
     return result.skipAPI ? result.response || null : null;
-}
-
-/**
- * Best-effort detection for whether the current user request includes media.
- * If caller already knows this, pass `requestHasMedia` in config to avoid ambiguity.
- */
-function detectRequestMedia(userMessage: string, messages: Message[]): boolean {
-    const normalizedUserMessage = userMessage.trim();
-
-    for (let index = messages.length - 1; index >= 0; index--) {
-        const message = messages[index];
-        if (message.role !== 'user') {
-            continue;
-        }
-
-        const hasAttachments = Boolean(message.attachments && message.attachments.length > 0);
-        if (!hasAttachments) {
-            return false;
-        }
-
-        const normalizedMessageText = (message.text || '').trim();
-        if (!normalizedUserMessage || normalizedMessageText === normalizedUserMessage) {
-            return true;
-        }
-
-        return false;
-    }
-
-    return false;
 }
 
 // =====================================================

@@ -3,7 +3,6 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { Mic, Square, Headphones, Loader2, Sparkles, X, Activity, Volume2, MicOff } from './Icons';
 import { ChatConfig } from '../types';
-import { resolveGeminiApiKey } from './lib/env';
 
 interface VoiceContinuumProps {
   onClose: () => void;
@@ -92,8 +91,7 @@ const VoiceContinuum: React.FC<VoiceContinuumProps> = ({ onClose, config, isDark
 
   const startContinuum = async () => {
     setIsConnecting(true);
-    const apiKey = resolveGeminiApiKey();
-    const ai = new GoogleGenAI({ apiKey: apiKey || '' });
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });

@@ -1,8 +1,7 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 import { supabase } from "../lib/supabase";
-import {
-
+import { 
   Prediction, 
   PredictionType, 
   PreemptiveAction, 
@@ -11,13 +10,10 @@ import {
 } from "../types";
 import { v4 as uuidv4 } from 'uuid';
 import { modelManager } from "./modelManager";
-import { resolveGeminiApiKey } from "../lib/env";
-
-const supabaseDb = supabase;
 
 // Safe lazy initialization
 const getAiClient = () => {
-    const apiKey = resolveGeminiApiKey();
+    const apiKey = (typeof process !== 'undefined' && process.env) ? process.env.API_KEY : '';
     return new GoogleGenAI({ apiKey: apiKey || '' });
 };
 
@@ -25,8 +21,8 @@ class OracleEngine {
   public async generatePredictions(userId: string): Promise<Prediction[]> {
     const ai = getAiClient();
     const [chats, memories] = await Promise.all([
-      supabaseDb.from('chats').select('messages').eq('user_id', userId).order('created_at', { ascending: false }).limit(10),
-      supabaseDb.from('memories').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(20)
+      supabase.from('chats').select('messages').eq('user_id', userId).order('created_at', { ascending: false }).limit(10),
+      supabase.from('memories').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(20)
     ]);
 
     const conversations = (chats.data || []).flatMap(c => c.messages || []).slice(-50);
@@ -106,7 +102,7 @@ class OracleEngine {
         created_at: new Date().toISOString()
       }));
 
-      await supabaseDb.from('predictions').insert(dbEntries);
+      await supabase.from('predictions').insert(dbEntries);
 
       return predictions;
     } catch (error) {
@@ -116,7 +112,7 @@ class OracleEngine {
   }
 
   public async getPredictions(userId: string): Promise<Prediction[]> {
-    const { data, error } = await supabaseDb
+    const { data, error } = await supabase
       .from('predictions')
       .select('*')
       .eq('user_id', userId)
@@ -140,7 +136,7 @@ class OracleEngine {
     const ai = getAiClient();
     const actionId = uuidv4();
     
-    await supabaseDb.from('preemptive_actions').insert({
+    await supabase.from('preemptive_actions').insert({
       id: actionId,
       prediction_id: prediction.id,
       description: prediction.suggestedAction || `Preparing context for ${prediction.type}: ${prediction.content}`,
@@ -163,7 +159,7 @@ class OracleEngine {
         resultData = { toneAdjustment: `Shift toward ${prediction.content} empathy.` };
       }
 
-      await supabaseDb.from('preemptive_actions').update({
+      await supabase.from('preemptive_actions').update({
         status: 'completed',
         result: resultData,
         completed_at: new Date().toISOString()
@@ -173,16 +169,16 @@ class OracleEngine {
         id: actionId,
         description: prediction.suggestedAction || "Analysis completed",
         status: 'completed',
-        result: resultData
+        result: JSON.stringify(resultData)
       };
     } catch (e) {
-      await supabaseDb.from('preemptive_actions').update({ status: 'failed' }).eq('id', actionId);
+      await supabase.from('preemptive_actions').update({ status: 'failed' }).eq('id', actionId);
       throw e;
     }
   }
 
   public async validatePrediction(predictionId: string, wasAccurate: boolean): Promise<void> {
-    await supabaseDb
+    await supabase
       .from('predictions')
       .update({ 
         was_accurate: wasAccurate, 
@@ -192,7 +188,7 @@ class OracleEngine {
   }
 
   public async getAccuracyScore(userId: string): Promise<number> {
-    const { data, error } = await supabaseDb
+    const { data, error } = await supabase
       .from('predictions')
       .select('was_accurate')
       .eq('user_id', userId)

@@ -5,9 +5,6 @@
 import { supabase } from '../lib/supabase';
 import { Persona } from '../types';
 
-const supabaseDb = supabase;
-
-
 export interface UserStats {
     id: string;
     email: string;
@@ -54,13 +51,22 @@ export interface ReferenceImage {
 
 export const checkIsAdmin = async (userId: string): Promise<boolean> => {
     try {
-        const { data, error } = await supabaseDb
+        const { data, error } = await supabase
             .from('admin_users')
             .select('user_id')
             .eq('user_id', userId)
-            .single();
+            .maybeSingle();
 
-        return !error && !!data;
+        if (error) {
+            const message = (error.message || '').toLowerCase();
+            const missingTable = error.code === '42P01' || message.includes('relation admin_users does not exist') || message.includes('relation admin_users does not exist');
+            if (missingTable) {
+                return false;
+            }
+            return false;
+        }
+
+        return Boolean(data);
     } catch {
         return false;
     }
@@ -72,7 +78,7 @@ export const checkIsAdmin = async (userId: string): Promise<boolean> => {
 
 export const fetchAllUsers = async (): Promise<UserStats[]> => {
     try {
-        const { data, error } = await supabaseDb
+        const { data, error } = await supabase
             .from('users_view')
             .select('*')
             .order('created_at', { ascending: false });
@@ -99,10 +105,10 @@ export const fetchAllUsers = async (): Promise<UserStats[]> => {
 export const fetchSystemStats = async (): Promise<SystemStats | null> => {
     try {
         const [usersRes, convsRes, personasRes, processedRes] = await Promise.all([
-            supabaseDb.from('users_view').select('id', { count: 'exact', head: true }),
-            supabaseDb.from('conversations').select('id', { count: 'exact', head: true }),
-            supabaseDb.from('personas').select('id', { count: 'exact', head: true }).eq('is_global', true),
-            supabaseDb.from('personas').select('id', { count: 'exact', head: true }).eq('is_global', true).eq('is_processed', true)
+            supabase.from('users_view').select('id', { count: 'exact', head: true }),
+            supabase.from('conversations').select('id', { count: 'exact', head: true }),
+            supabase.from('personas').select('id', { count: 'exact', head: true }).eq('is_global', true),
+            supabase.from('personas').select('id', { count: 'exact', head: true }).eq('is_global', true).eq('is_processed', true)
         ]);
 
         return {
@@ -123,7 +129,7 @@ export const fetchSystemStats = async (): Promise<SystemStats | null> => {
 // ============================================
 
 export const fetchAllPersonas = async (): Promise<Persona[]> => {
-    const { data, error } = await supabaseDb
+    const { data, error } = await supabase
         .from('personas')
         .select('*')
         .eq('is_global', true)
@@ -138,7 +144,7 @@ export const fetchAllPersonas = async (): Promise<Persona[]> => {
 };
 
 export const fetchPersonaStats = async (): Promise<PersonaStats[]> => {
-    const { data, error } = await supabaseDb
+    const { data, error } = await supabase
         .from('persona_stats_view')
         .select('*');
 
@@ -159,7 +165,7 @@ export const createPersona = async (
         return null;
     }
 
-    const { data, error } = await supabaseDb
+    const { data, error } = await supabase
         .from('personas')
         .insert({
             name: persona.name || 'New Persona',
@@ -187,7 +193,7 @@ export const updatePersona = async (
     personaId: string,
     updates: Partial<Persona>
 ): Promise<boolean> => {
-    const { error } = await supabaseDb
+    const { error } = await supabase
         .from('personas')
         .update({
             ...updates,
@@ -218,7 +224,7 @@ export const deletePersona = async (personaId: string): Promise<boolean> => {
 
     // 1. Try to delete reference images (table may not exist)
     try {
-        const { data: images } = await supabaseDb
+        const { data: images } = await supabase
             .from('persona_reference_images')
             .select('id, storage_path')
             .eq('persona_id', personaId);
@@ -229,7 +235,7 @@ export const deletePersona = async (personaId: string): Promise<boolean> => {
             if (storagePaths.length > 0) {
                 await supabase.storage.from('persona-references').remove(storagePaths);
             }
-            await supabaseDb.from('persona_reference_images').delete().eq('persona_id', personaId);
+            await supabase.from('persona_reference_images').delete().eq('persona_id', personaId);
         }
     } catch (e) {
         console.warn('[Admin] Reference images cleanup skipped (table may not exist):', e);
@@ -237,7 +243,7 @@ export const deletePersona = async (personaId: string): Promise<boolean> => {
 
     // 2. Try to delete sessions (table may not exist)
     try {
-        const { data: sessions } = await supabaseDb
+        const { data: sessions } = await supabase
             .from('sessions')
             .select('id')
             .eq('persona_id', personaId);
@@ -247,9 +253,9 @@ export const deletePersona = async (personaId: string): Promise<boolean> => {
             console.log(`[Admin] Deleting ${sessions.length} sessions and their messages`);
 
             for (const sessionId of sessionIds) {
-                await supabaseDb.from('messages').delete().eq('session_id', sessionId);
+                await supabase.from('messages').delete().eq('session_id', sessionId);
             }
-            await supabaseDb.from('sessions').delete().in('id', sessionIds);
+            await supabase.from('sessions').delete().in('id', sessionIds);
         }
     } catch (e) {
         console.warn('[Admin] Sessions cleanup skipped (table may not exist):', e);
@@ -257,7 +263,7 @@ export const deletePersona = async (personaId: string): Promise<boolean> => {
 
     // 3. Try to delete conversations (table may not exist)
     try {
-        const { data: convos } = await supabaseDb
+        const { data: convos } = await supabase
             .from('conversations')
             .select('id')
             .eq('persona_id', personaId);
@@ -265,7 +271,7 @@ export const deletePersona = async (personaId: string): Promise<boolean> => {
         if (convos && convos.length > 0) {
             const convoIds = convos.map(c => c.id);
             console.log(`[Admin] Deleting ${convos.length} conversations`);
-            await supabaseDb.from('conversations').delete().in('id', convoIds);
+            await supabase.from('conversations').delete().in('id', convoIds);
         }
     } catch (e) {
         console.warn('[Admin] Conversations cleanup skipped (table may not exist):', e);
@@ -275,7 +281,7 @@ export const deletePersona = async (personaId: string): Promise<boolean> => {
     try {
         console.log(`[Admin] Attempting to delete persona record from 'personas' table...`);
 
-        const { error, count } = await supabaseDb
+        const { error, count } = await supabase
             .from('personas')
             .delete()
             .eq('id', personaId)
@@ -287,7 +293,7 @@ export const deletePersona = async (personaId: string): Promise<boolean> => {
         }
 
         // Verify deletion
-        const { data: checkData, error: checkError } = await supabaseDb
+        const { data: checkData, error: checkError } = await supabase
             .from('personas')
             .select('id, name')
             .eq('id', personaId)
@@ -325,7 +331,7 @@ const REFERENCE_IMAGE_BUCKET = 'persona-references';
 const MAX_REFERENCE_IMAGES = 20;
 
 export const fetchReferenceImages = async (personaId: string): Promise<ReferenceImage[]> => {
-    const { data, error } = await supabaseDb
+    const { data, error } = await supabase
         .from('persona_reference_images')
         .select('*')
         .eq('persona_id', personaId)
@@ -375,7 +381,7 @@ export const uploadReferenceImage = async (
         .getPublicUrl(fileName);
 
     // 3. Create database record with user_id for persistence
-    const { data, error } = await supabaseDb
+    const { data, error } = await supabase
         .from('persona_reference_images')
         .insert({
             persona_id: personaId,
@@ -430,7 +436,7 @@ export const deleteReferenceImage = async (imageId: string, storagePath: string)
         }
 
         // 2. Delete from database
-        const { error } = await supabaseDb
+        const { error } = await supabase
             .from('persona_reference_images')
             .delete()
             .eq('id', imageId);
@@ -454,13 +460,13 @@ export const deleteReferenceImage = async (imageId: string, storagePath: string)
 export const setPrimaryImage = async (personaId: string, imageId: string): Promise<boolean> => {
     try {
         // Reset all images for this persona
-        await supabaseDb
+        await supabase
             .from('persona_reference_images')
             .update({ is_primary: false })
             .eq('persona_id', personaId);
 
         // Set the new primary
-        const { error } = await supabaseDb
+        const { error } = await supabase
             .from('persona_reference_images')
             .update({ is_primary: true })
             .eq('id', imageId);
@@ -482,7 +488,7 @@ export const reorderReferenceImages = async (
     try {
         // Update each image's display_order
         const updates = orderedImageIds.map((id, index) =>
-            supabaseDb
+            supabase
                 .from('persona_reference_images')
                 .update({ display_order: index })
                 .eq('id', id)
@@ -501,7 +507,7 @@ export const reorderReferenceImages = async (
  * Get count of reference images for a persona
  */
 export const getReferenceImageCount = async (personaId: string): Promise<number> => {
-    const { count, error } = await supabaseDb
+    const { count, error } = await supabase
         .from('persona_reference_images')
         .select('id', { count: 'exact', head: true })
         .eq('persona_id', personaId);

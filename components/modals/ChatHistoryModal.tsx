@@ -4,8 +4,16 @@
  */
 
 import React, { useEffect, useState } from 'react';
+import { supabase } from '../../lib/supabase';
 import { X, MessageSquare, Clock, Loader2 } from '../Icons';
-import { messageRepository, type ChatHistoryEntry } from '../../src/data/repositories';
+
+interface ChatSession {
+    id: string;
+    created_at: string;
+    updated_at: string;
+    messages: any[];
+    title?: string;
+}
 
 interface ChatHistoryModalProps {
     isOpen: boolean;
@@ -24,7 +32,7 @@ const ChatHistoryModal: React.FC<ChatHistoryModalProps> = ({
     currentSessionId,
     onSelectSession
 }) => {
-    const [sessions, setSessions] = useState<ChatHistoryEntry[]>([]);
+    const [sessions, setSessions] = useState<ChatSession[]>([]);
     const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
@@ -36,11 +44,20 @@ const ChatHistoryModal: React.FC<ChatHistoryModalProps> = ({
     const loadHistory = async () => {
         setIsLoading(true);
         try {
-            const data = await messageRepository.listChatsByPersona(personaId, 50);
-            setSessions(data);
+            const { data, error } = await supabase
+                .from('chats')
+                .select('id, created_at, updated_at, messages, title')
+                .eq('persona_id', personaId)
+                .order('updated_at', { ascending: false })
+                .limit(50);
+
+            if (error) {
+                console.error('Failed to load chat history:', error);
+            } else {
+                setSessions(data || []);
+            }
         } catch (e) {
             console.error('Error loading history:', e);
-            setSessions([]);
         } finally {
             setIsLoading(false);
         }
@@ -57,7 +74,7 @@ const ChatHistoryModal: React.FC<ChatHistoryModalProps> = ({
         return date.toLocaleDateString();
     };
 
-    const getPreview = (messages: ChatHistoryEntry['messages']) => {
+    const getPreview = (messages: any[]) => {
         if (!messages || messages.length === 0) return 'No messages yet';
         const lastMsg = messages[messages.length - 1];
         const text = lastMsg?.text || '';

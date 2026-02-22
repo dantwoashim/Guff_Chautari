@@ -1,20 +1,15 @@
-
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
-  Video,
-  Phone,
-  Search,
-  MoreHorizontal,
   ArrowLeft,
+  Command,
+  History,
   Maximize,
   Minimize,
+  MoreHorizontal,
   PanelLeft,
   PanelLeftClose,
-  History,
-  Trash2,
-  RefreshCw,
-  Info,
-  MessageSquare
+  Search,
+  Video,
 } from '../Icons';
 import { Persona } from '../../types';
 
@@ -28,7 +23,7 @@ interface ChatHeaderProps {
   toggleFullscreen?: () => void;
   isFullscreen?: boolean;
   onNewChat?: () => void;
-  onShowHistory?: () => void; // NEW: Show chat history with this persona
+  onShowHistory?: () => void;
 }
 
 const ChatHeader: React.FC<ChatHeaderProps> = ({
@@ -41,150 +36,147 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
   toggleFullscreen,
   isFullscreen,
   onNewChat,
-  onShowHistory
+  onShowHistory,
 }) => {
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Close menu on click outside
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
+    const handler = (event: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setIsMenuOpen(false);
+        setMenuOpen(false);
       }
     };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+
+    window.addEventListener('mousedown', handler);
+    return () => window.removeEventListener('mousedown', handler);
   }, []);
 
-  const formatLastSeen = (date?: string): string => {
-    if (!date) return 'last seen recently';
-    const d = new Date(date);
-    const now = new Date();
-    const diffMins = Math.floor((now.getTime() - d.getTime()) / 60000);
-
-    if (diffMins < 1) return 'last seen just now';
-    if (diffMins < 60) return `last seen ${diffMins}m ago`;
-    if (diffMins < 1440) return `last seen ${Math.floor(diffMins / 60)}h ago`;
-    return `last seen ${d.toLocaleDateString()}`;
-  };
-
-  const statusText = isTyping
-    ? 'typing...'
-    : (persona?.is_online ?? true)
-      ? 'Online'
-      : formatLastSeen(undefined);
-
   return (
-    <header className="wa-header border-l border-[#313d45] shrink-0 z-20 flex items-center justify-between px-4 py-2.5 bg-[#202c33]">
-      <div className="flex items-center gap-3 overflow-hidden">
-        {onBack && (
-          <button onClick={onBack} className="md:hidden text-[#aebac1] mr-1" title="Go Back">
-            <ArrowLeft size={24} />
+    <header className="h-[72px] px-4 md:px-5 border-b border-[color:var(--color-border)] flex items-center justify-between gap-3 bg-[color:rgba(10,20,32,0.74)] backdrop-blur-xl">
+      <div className="flex items-center gap-3 min-w-0">
+        {onBack ? (
+          <button
+            onClick={onBack}
+            className="premium-button md:hidden h-9 w-9 inline-flex items-center justify-center"
+            title="Back"
+            aria-label="Back"
+          >
+            <ArrowLeft size={16} />
           </button>
-        )}
+        ) : null}
 
-        {/* Sidebar Toggle Button */}
-        {toggleChatList && (
+        {toggleChatList ? (
           <button
             onClick={toggleChatList}
-            className={`flex items-center justify-center w-9 h-9 rounded-lg transition-all mr-1 ${isChatListOpen
-              ? 'text-[#00a884] bg-[#00a884]/10 hover:bg-[#00a884]/20'
-              : 'text-[#aebac1] bg-[#2a3942] hover:bg-[#3a4a55]'
-              }`}
-            title={isChatListOpen ? "Hide Sidebar" : "Show Sidebar"}
+            className="premium-button h-9 w-9 inline-flex items-center justify-center"
+            title={isChatListOpen ? 'Hide context rail' : 'Show context rail'}
+            aria-label={isChatListOpen ? 'Hide context rail' : 'Show context rail'}
           >
-            {isChatListOpen ? <PanelLeftClose size={20} /> : <PanelLeft size={20} />}
+            {isChatListOpen ? <PanelLeftClose size={16} /> : <PanelLeft size={16} />}
           </button>
-        )}
+        ) : null}
 
-        {/* Chat History Button - Show past chats with this persona */}
-        {onShowHistory && (
-          <button
-            onClick={onShowHistory}
-            className="flex items-center justify-center w-9 h-9 rounded-lg transition-all mr-2 text-[#aebac1] bg-[#2a3942] hover:bg-[#3a4a55] hover:text-[#e9edef]"
-            title="Chat History"
-          >
-            <History size={18} />
-          </button>
-        )}
-
-        <div className="relative shrink-0 cursor-pointer">
-          <div className="w-10 h-10 rounded-full bg-[#6a7175] overflow-hidden flex items-center justify-center">
-            {persona?.name ? (
-              persona.avatar_url ? (
-                <img src={persona.avatar_url} alt={persona.name} className="w-full h-full object-cover" />
-              ) : (
-                <span className="text-xl text-[#cfd4d6]">{persona.name[0]}</span>
-              )
-            ) : (
-              <span className="text-xl text-[#cfd4d6]">?</span>
-            )}
-          </div>
+        <div className="relative h-11 w-11 rounded-full overflow-hidden border border-[color:var(--color-border)] bg-[color:rgba(20,42,66,0.92)] shrink-0">
+          {persona?.avatar_url ? (
+            <img src={persona.avatar_url} alt={persona.name} className="w-full h-full object-cover" />
+          ) : (
+            <span className="w-full h-full inline-flex items-center justify-center text-sm font-semibold text-[color:var(--color-text)]">
+              {(persona?.name || 'A')[0]}
+            </span>
+          )}
         </div>
 
-        <div className="flex flex-col justify-center min-w-0 cursor-pointer">
-          <h2 className="text-[#e9edef] text-[16px] leading-tight font-medium truncate">
+        <div className="min-w-0">
+          <h1 className="text-sm font-semibold text-[color:var(--color-text)] truncate">
             {persona?.name || 'Ashim'}
-          </h2>
-          <span className={`text-[13px] leading-tight truncate transition-colors duration-200 ${isTyping ? 'text-[#00a884] font-medium' : 'text-[#8696a0]'}`}>
-            {statusText}
-          </span>
+          </h1>
+          <p className={`text-xs ${isTyping ? 'text-[color:var(--color-accent)]' : 'text-[color:var(--color-text-muted)]'}`}>
+            {isTyping ? 'Generating response...' : persona?.status_text || 'Ready for conversation'}
+          </p>
         </div>
       </div>
 
-      <div className="flex items-center gap-3 shrink-0 relative">
-        {toggleFullscreen && (
-          <button onClick={toggleFullscreen} className="text-[#aebac1] hover:text-[#e9edef] p-2 rounded-full transition-colors hidden sm:block" title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}>
-            {isFullscreen ? <Minimize size={20} /> : <Maximize size={20} />}
-          </button>
-        )}
-
-        <button className="text-[#aebac1] hover:text-[#e9edef] p-2 rounded-full transition-colors" onClick={onOpenVideoCall} title="Video Call">
-          <Video size={20} />
-        </button>
-        <button className="text-[#aebac1] hover:text-[#e9edef] p-2 rounded-full transition-colors" title="Voice Call">
-          <Phone size={20} />
-        </button>
-        <div className="w-px h-6 bg-[#313d45] mx-1 hidden sm:block" />
-        <button className="text-[#aebac1] hover:text-[#e9edef] p-2 rounded-full transition-colors hidden sm:block">
-          <Search size={20} />
-        </button>
-
-        <div className="relative" ref={menuRef}>
+      <div className="flex items-center gap-2" ref={menuRef}>
+        {onShowHistory ? (
           <button
-            onClick={() => setIsMenuOpen(!isMenuOpen)}
-            className={`text-[#aebac1] hover:text-[#e9edef] p-2 rounded-full transition-colors ${isMenuOpen ? 'bg-[#2a3942]' : ''}`}
+            onClick={onShowHistory}
+            className="premium-button h-9 w-9 inline-flex items-center justify-center"
+            title="Conversation history"
+            aria-label="Conversation history"
           >
-            <MoreHorizontal size={20} />
+            <History size={16} />
           </button>
+        ) : null}
 
-          {isMenuOpen && (
-            <div className="absolute right-0 top-full mt-2 w-48 bg-[#233138] rounded-md shadow-xl py-2 border border-[#111b21]/50 z-50 animate-scale-in origin-top-right">
-              {onNewChat && (
-                <>
-                  <button
-                    onClick={() => { setIsMenuOpen(false); onNewChat(); }}
-                    className="w-full px-4 py-2.5 text-left text-[14.5px] text-[#e9edef] hover:bg-[#111b21] transition-colors flex items-center gap-3"
-                  >
-                    <MessageSquare size={16} /> Start New Chat
-                  </button>
-                  <div className="h-px bg-[#313d45] my-1 opacity-50" />
-                </>
-              )}
-              <button className="w-full px-4 py-2.5 text-left text-[14.5px] text-[#e9edef] hover:bg-[#111b21] transition-colors flex items-center gap-3">
-                <Info size={16} /> Contact Info
-              </button>
-              <button className="w-full px-4 py-2.5 text-left text-[14.5px] text-[#e9edef] hover:bg-[#111b21] transition-colors flex items-center gap-3">
-                <RefreshCw size={16} /> Clear messages
-              </button>
-              <div className="h-px bg-[#313d45] my-1 opacity-50" />
-              <button className="w-full px-4 py-2.5 text-left text-[14.5px] text-red-400 hover:bg-[#111b21] transition-colors flex items-center gap-3">
-                <Trash2 size={16} /> Delete chat
-              </button>
-            </div>
-          )}
-        </div>
+        <button
+          className="premium-button h-9 w-9 inline-flex items-center justify-center"
+          title="Search"
+          aria-label="Search"
+        >
+          <Search size={16} />
+        </button>
+
+        <button
+          onClick={onOpenVideoCall}
+          className="premium-button h-9 w-9 inline-flex items-center justify-center"
+          title="Video"
+          aria-label="Open video mode"
+        >
+          <Video size={16} />
+        </button>
+
+        {toggleFullscreen ? (
+          <button
+            onClick={toggleFullscreen}
+            className="premium-button h-9 w-9 hidden md:inline-flex items-center justify-center"
+            title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+            aria-label={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+          >
+            {isFullscreen ? <Minimize size={16} /> : <Maximize size={16} />}
+          </button>
+        ) : null}
+
+        <button
+          onClick={() => setMenuOpen((prev) => !prev)}
+          className="premium-button h-9 w-9 inline-flex items-center justify-center"
+          title="More"
+          aria-label="More actions"
+        >
+          <MoreHorizontal size={16} />
+        </button>
+
+        {menuOpen ? (
+          <div className="absolute top-[58px] right-0 w-56 premium-panel p-2 z-30">
+            <button
+              onClick={() => {
+                setMenuOpen(false);
+                onNewChat?.();
+              }}
+              className="w-full text-left px-3 py-2 rounded-lg text-sm hover:bg-[color:rgba(24,52,82,0.78)]"
+            >
+              Start new chat
+            </button>
+
+            <button
+              onClick={() => {
+                setMenuOpen(false);
+                onShowHistory?.();
+              }}
+              className="w-full text-left px-3 py-2 rounded-lg text-sm hover:bg-[color:rgba(24,52,82,0.78)]"
+            >
+              Open chat history
+            </button>
+
+            <button
+              onClick={() => setMenuOpen(false)}
+              className="w-full text-left px-3 py-2 rounded-lg text-sm text-[color:var(--color-text-muted)] hover:bg-[color:rgba(24,52,82,0.78)] flex items-center gap-2"
+            >
+              <Command size={14} />
+              Use Command Palette (Cmd/Ctrl+K)
+            </button>
+          </div>
+        ) : null}
       </div>
     </header>
   );

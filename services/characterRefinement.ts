@@ -6,12 +6,11 @@
 import { GoogleGenAI } from "@google/genai";
 import { ReferenceAsset, CharacterModel } from '../types';
 import { supabase } from '../lib/supabase';
-import { resolveGeminiApiKey } from '../lib/env';
 import { v4 as uuidv4 } from 'uuid';
 
 // Safe lazy initialization
 const getAiClient = () => {
-    const apiKey = resolveGeminiApiKey();
+    const apiKey = (typeof process !== 'undefined' && process.env) ? process.env.API_KEY : '';
     return new GoogleGenAI({ apiKey: apiKey || '' });
 };
 

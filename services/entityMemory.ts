@@ -9,11 +9,8 @@
 
 import { supabase } from "../lib/supabase";
 import { GoogleGenAI } from "@google/genai";
-import { resolveGeminiApiKey } from "../lib/env";
 import { modelManager } from "./modelManager";
 import { Message } from "../types";
-
-const supabaseDb = supabase;
 
 // ==========================================
 // TYPES
@@ -59,7 +56,7 @@ export interface EntityExtractionResult {
 // ==========================================
 
 const getAiClient = () => {
-    const apiKey = resolveGeminiApiKey();
+    const apiKey = (typeof process !== 'undefined' && process.env) ? process.env.API_KEY : '';
     return new GoogleGenAI({ apiKey: apiKey || '' });
 };
 
@@ -161,7 +158,7 @@ export async function upsertEntity(
         const normalizedName = extraction.entityName.toLowerCase().trim();
 
         // Check if entity exists
-        const { data: existing } = await supabaseDb
+        const { data: existing } = await supabase
             .from('entity_memories')
             .select('*')
             .eq('user_id', userId)
@@ -204,7 +201,7 @@ export async function upsertEntity(
 
             const mergedFacts = [...existingFacts, ...newFacts];
 
-            const { data: updated, error } = await supabaseDb
+            const { data: updated, error } = await supabase
                 .from('entity_memories')
                 .update({
                     facts: mergedFacts,
@@ -230,7 +227,7 @@ export async function upsertEntity(
                 mentionCount: 1
             }));
 
-            const { data: created, error } = await supabaseDb
+            const { data: created, error } = await supabase
                 .from('entity_memories')
                 .insert({
                     user_id: userId,
@@ -265,7 +262,7 @@ export async function getEntities(
     limit: number = 50
 ): Promise<Entity[]> {
     try {
-        const { data, error } = await supabaseDb
+        const { data, error } = await supabase
             .from('entity_memories')
             .select('*')
             .eq('user_id', userId)
@@ -290,7 +287,7 @@ export async function getEntity(
     entityName: string
 ): Promise<Entity | null> {
     try {
-        const { data, error } = await supabaseDb
+        const { data, error } = await supabase
             .from('entity_memories')
             .select('*')
             .eq('user_id', userId)
@@ -315,7 +312,7 @@ export async function searchEntities(
     limit: number = 10
 ): Promise<Entity[]> {
     try {
-        const { data, error } = await supabaseDb
+        const { data, error } = await supabase
             .from('entity_memories')
             .select('*')
             .eq('user_id', userId)
@@ -440,7 +437,7 @@ export async function decayEntityFacts(
         });
 
         if (needsUpdate) {
-            await supabaseDb
+            await supabase
                 .from('entity_memories')
                 .update({ facts: updatedFacts })
                 .eq('id', entity.id);

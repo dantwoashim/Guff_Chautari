@@ -47,6 +47,21 @@ CREATE POLICY "Auth Insert library-images" ON storage.objects FOR INSERT TO auth
 CREATE POLICY "Auth Update library-images" ON storage.objects FOR UPDATE TO authenticated USING ( bucket_id = 'library-images' );
 CREATE POLICY "Auth Delete library-images" ON storage.objects FOR DELETE TO authenticated USING ( bucket_id = 'library-images' );
 
+-- 4. NEW: Persona References Bucket (for persona-specific reference images)
+INSERT INTO storage.buckets (id, name, public) 
+VALUES ('persona-references', 'persona-references', true)
+ON CONFLICT (id) DO UPDATE SET public = true;
+
+DROP POLICY IF EXISTS "Public Access persona-references" ON storage.objects;
+DROP POLICY IF EXISTS "Auth Insert persona-references" ON storage.objects;
+DROP POLICY IF EXISTS "Auth Update persona-references" ON storage.objects;
+DROP POLICY IF EXISTS "Auth Delete persona-references" ON storage.objects;
+
+CREATE POLICY "Public Access persona-references" ON storage.objects FOR SELECT USING ( bucket_id = 'persona-references' );
+CREATE POLICY "Auth Insert persona-references" ON storage.objects FOR INSERT TO authenticated WITH CHECK ( bucket_id = 'persona-references' );
+CREATE POLICY "Auth Update persona-references" ON storage.objects FOR UPDATE TO authenticated USING ( bucket_id = 'persona-references' );
+CREATE POLICY "Auth Delete persona-references" ON storage.objects FOR DELETE TO authenticated USING ( bucket_id = 'persona-references' );
+
 -- =====================================================
 -- CORE TABLES
 -- =====================================================
@@ -288,6 +303,20 @@ CREATE TABLE IF NOT EXISTS instruction_presets (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
+-- PERSONA REFERENCE IMAGES (for AI image generation consistency)
+CREATE TABLE IF NOT EXISTS persona_reference_images (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  persona_id UUID REFERENCES personas(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  image_url TEXT NOT NULL,
+  storage_path TEXT NOT NULL,
+  image_type TEXT DEFAULT 'reference',
+  description TEXT,
+  is_primary BOOLEAN DEFAULT FALSE,
+  display_order INT DEFAULT 0,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
 -- =====================================================
 -- RLS POLICIES
 -- =====================================================
@@ -345,7 +374,7 @@ BEGIN
     CREATE POLICY "Users can CRUD their own dreams" ON dreams FOR ALL USING (auth.uid() = user_id);
 
     DROP POLICY IF EXISTS "Users can CRUD their own branches" ON conversation_branches;
-    CREATE POLICY "Users can CRUD their own branches" ON conversation_branches FOR ALL USING (auth.uid() = (SELECT user_id FROM chats WHERE id = session_id));
+    CREATE POLICY "Users can CRUD their own branches" ON conversation_branches FOR ALL USING (auth.uid() = (SELECT user_id FROM chats WHERE id = session_id LIMIT 1));
 
     DROP POLICY IF EXISTS "Users can CRUD their own consciousness" ON persona_consciousness;
     CREATE POLICY "Users can CRUD their own consciousness" ON persona_consciousness FOR ALL USING (auth.uid() = user_id);
@@ -355,7 +384,14 @@ BEGIN
 
     DROP POLICY IF EXISTS "Users can CRUD their own conversations" ON conversations;
     CREATE POLICY "Users can CRUD their own conversations" ON conversations FOR ALL USING (auth.uid() = user_id);
+
+    -- PERSONA REFERENCE IMAGES: Allow authenticated users to manage reference images for personas
+    -- Note: For global personas, admin users (who created them) can manage the reference images
+    DROP POLICY IF EXISTS "Users can CRUD reference images" ON persona_reference_images;
+    CREATE POLICY "Users can CRUD reference images" ON persona_reference_images FOR ALL USING (auth.uid() = user_id);
 END $$;
+
+ALTER TABLE persona_reference_images ENABLE ROW LEVEL SECURITY;
 
 -- =====================================================
 -- FUNCTIONS
@@ -401,300 +437,19 @@ END;
 $$;
 
 CREATE OR REPLACE FUNCTION append_chat_message(
-  p_chat_id UUID,
-  p_message JSONB,
-  p_touch_updated_at BOOLEAN DEFAULT TRUE
+    p_chat_id UUID,
+    p_message JSONB
 )
-RETURNS BOOLEAN
+RETURNS VOID
 LANGUAGE plpgsql
+SECURITY DEFINER
 AS $$
 BEGIN
-  UPDATE chats
-  SET
-    messages = COALESCE(messages, '[]'::jsonb) || p_message,
-    updated_at = CASE WHEN p_touch_updated_at THEN NOW() ELSE updated_at END
-  WHERE id = p_chat_id
-    AND user_id = auth.uid();
-
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'Chat not found or access denied';
-  END IF;
-
-  RETURN TRUE;
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION set_chat_messages(
-  p_chat_id UUID,
-  p_messages JSONB,
-  p_touch_updated_at BOOLEAN DEFAULT TRUE
-)
-RETURNS BOOLEAN
-LANGUAGE plpgsql
-AS $$
-BEGIN
-  UPDATE chats
-  SET
-    messages = COALESCE(p_messages, '[]'::jsonb),
-    updated_at = CASE WHEN p_touch_updated_at THEN NOW() ELSE updated_at END
-  WHERE id = p_chat_id
-    AND user_id = auth.uid();
-
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'Chat not found or access denied';
-  END IF;
-
-  RETURN TRUE;
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION upsert_chat_message(
-  p_chat_id UUID,
-  p_message JSONB,
-  p_touch_updated_at BOOLEAN DEFAULT TRUE
-)
-RETURNS BOOLEAN
-LANGUAGE plpgsql
-AS $$
-DECLARE
-  v_message_id TEXT;
-  v_current JSONB;
-  v_next JSONB;
-BEGIN
-  SELECT COALESCE(messages, '[]'::jsonb)
-  INTO v_current
-  FROM chats
-  WHERE id = p_chat_id
-    AND user_id = auth.uid()
-  FOR UPDATE;
-
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'Chat not found or access denied';
-  END IF;
-
-  v_message_id := NULLIF(TRIM(COALESCE(p_message->>'id', '')), '');
-
-  IF v_message_id IS NULL THEN
-    v_next := v_current || p_message;
-  ELSE
-    WITH exploded AS (
-      SELECT value AS elem, ordinality AS ord
-      FROM jsonb_array_elements(v_current) WITH ORDINALITY
-    ),
-    has_match AS (
-      SELECT EXISTS(SELECT 1 FROM exploded WHERE elem->>'id' = v_message_id) AS present
-    )
-    SELECT
-      CASE
-        WHEN (SELECT present FROM has_match)
-          THEN COALESCE(
-            (
-              SELECT jsonb_agg(
-                CASE WHEN elem->>'id' = v_message_id THEN p_message ELSE elem END
-                ORDER BY ord
-              )
-              FROM exploded
-            ),
-            '[]'::jsonb
-          )
-        ELSE v_current || p_message
-      END
-    INTO v_next;
-  END IF;
-
-  UPDATE chats
-  SET
-    messages = COALESCE(v_next, '[]'::jsonb),
-    updated_at = CASE WHEN p_touch_updated_at THEN NOW() ELSE updated_at END
-  WHERE id = p_chat_id
-    AND user_id = auth.uid();
-
-  RETURN TRUE;
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION mark_chat_user_messages_read(
-  p_chat_id UUID,
-  p_touch_updated_at BOOLEAN DEFAULT FALSE
-)
-RETURNS BOOLEAN
-LANGUAGE plpgsql
-AS $$
-DECLARE
-  v_current JSONB;
-  v_next JSONB;
-BEGIN
-  SELECT COALESCE(messages, '[]'::jsonb)
-  INTO v_current
-  FROM chats
-  WHERE id = p_chat_id
-    AND user_id = auth.uid()
-  FOR UPDATE;
-
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'Chat not found or access denied';
-  END IF;
-
-  WITH exploded AS (
-    SELECT value AS elem, ordinality AS ord
-    FROM jsonb_array_elements(v_current) WITH ORDINALITY
-  )
-  SELECT COALESCE(
-    jsonb_agg(
-      CASE
-        WHEN elem->>'role' = 'user' AND COALESCE(elem->>'status', '') <> 'read'
-          THEN jsonb_set(elem, '{status}', '"read"'::jsonb, TRUE)
-        ELSE elem
-      END
-      ORDER BY ord
-    ),
-    '[]'::jsonb
-  )
-  INTO v_next
-  FROM exploded;
-
-  UPDATE chats
-  SET
-    messages = v_next,
-    updated_at = CASE WHEN p_touch_updated_at THEN NOW() ELSE updated_at END
-  WHERE id = p_chat_id
-    AND user_id = auth.uid();
-
-  RETURN v_next <> v_current;
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION append_chat_message_generation_log(
-  p_chat_id UUID,
-  p_message_id TEXT,
-  p_log_entry TEXT,
-  p_touch_updated_at BOOLEAN DEFAULT FALSE
-)
-RETURNS BOOLEAN
-LANGUAGE plpgsql
-AS $$
-DECLARE
-  v_message_id TEXT;
-  v_log_entry TEXT;
-  v_current JSONB;
-  v_next JSONB;
-  v_has_match BOOLEAN;
-BEGIN
-  v_message_id := NULLIF(TRIM(COALESCE(p_message_id, '')), '');
-  v_log_entry := NULLIF(TRIM(COALESCE(p_log_entry, '')), '');
-  IF v_message_id IS NULL OR v_log_entry IS NULL THEN
-    RETURN FALSE;
-  END IF;
-
-  SELECT COALESCE(messages, '[]'::jsonb)
-  INTO v_current
-  FROM chats
-  WHERE id = p_chat_id
-    AND user_id = auth.uid()
-  FOR UPDATE;
-
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'Chat not found or access denied';
-  END IF;
-
-  WITH exploded AS (
-    SELECT value AS elem
-    FROM jsonb_array_elements(v_current)
-  )
-  SELECT EXISTS(SELECT 1 FROM exploded WHERE elem->>'id' = v_message_id)
-  INTO v_has_match;
-
-  IF NOT v_has_match THEN
-    RETURN FALSE;
-  END IF;
-
-  WITH exploded AS (
-    SELECT value AS elem, ordinality AS ord
-    FROM jsonb_array_elements(v_current) WITH ORDINALITY
-  )
-  SELECT COALESCE(
-    jsonb_agg(
-      CASE
-        WHEN elem->>'id' = v_message_id THEN jsonb_set(
-          elem,
-          '{generationLogs}',
-          CASE
-            WHEN COALESCE(elem->'generationLogs', '[]'::jsonb) ? v_log_entry
-              THEN COALESCE(elem->'generationLogs', '[]'::jsonb)
-            ELSE COALESCE(elem->'generationLogs', '[]'::jsonb) || to_jsonb(v_log_entry)
-          END,
-          TRUE
-        )
-        ELSE elem
-      END
-      ORDER BY ord
-    ),
-    '[]'::jsonb
-  )
-  INTO v_next
-  FROM exploded;
-
-  UPDATE chats
-  SET
-    messages = v_next,
-    updated_at = CASE WHEN p_touch_updated_at THEN NOW() ELSE updated_at END
-  WHERE id = p_chat_id
-    AND user_id = auth.uid();
-
-  RETURN TRUE;
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION remove_chat_message(
-  p_chat_id UUID,
-  p_message_id TEXT,
-  p_touch_updated_at BOOLEAN DEFAULT TRUE
-)
-RETURNS BOOLEAN
-LANGUAGE plpgsql
-AS $$
-DECLARE
-  v_message_id TEXT;
-  v_current JSONB;
-  v_next JSONB;
-BEGIN
-  v_message_id := NULLIF(TRIM(COALESCE(p_message_id, '')), '');
-  IF v_message_id IS NULL THEN
-    RETURN FALSE;
-  END IF;
-
-  SELECT COALESCE(messages, '[]'::jsonb)
-  INTO v_current
-  FROM chats
-  WHERE id = p_chat_id
-    AND user_id = auth.uid()
-  FOR UPDATE;
-
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'Chat not found or access denied';
-  END IF;
-
-  WITH exploded AS (
-    SELECT value AS elem, ordinality AS ord
-    FROM jsonb_array_elements(v_current) WITH ORDINALITY
-  )
-  SELECT COALESCE(jsonb_agg(elem ORDER BY ord), '[]'::jsonb)
-  INTO v_next
-  FROM exploded
-  WHERE elem->>'id' <> v_message_id;
-
-  IF v_next = v_current THEN
-    RETURN FALSE;
-  END IF;
-
-  UPDATE chats
-  SET
-    messages = v_next,
-    updated_at = CASE WHEN p_touch_updated_at THEN NOW() ELSE updated_at END
-  WHERE id = p_chat_id
-    AND user_id = auth.uid();
-
-  RETURN TRUE;
+    UPDATE chats 
+    SET 
+        messages = COALESCE(messages, '[]'::jsonb) || p_message,
+        updated_at = NOW()
+    WHERE id = p_chat_id;
 END;
 $$;
 

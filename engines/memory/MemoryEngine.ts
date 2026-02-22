@@ -1,7 +1,6 @@
 
 import { supabase } from '../../lib/supabase';
 import { GoogleGenAI } from '@google/genai';
-import { resolveGeminiApiKey } from '../../lib/env';
 
 // Simple types if not importing from central types to avoid circular deps if needed
 export type MemoryType = 'episodic' | 'semantic' | 'emotional' | 'procedural';
@@ -16,7 +15,7 @@ export interface Memory {
 
 // Safe lazy initialization
 const getAiClient = () => {
-  const apiKey = resolveGeminiApiKey();
+  const apiKey = (typeof process !== 'undefined' && process.env) ? process.env.API_KEY : '';
   return new GoogleGenAI({ apiKey: apiKey || '' });
 };
 

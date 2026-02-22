@@ -1,25 +1,28 @@
 
-import { useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { Conversation, Persona } from '../types';
-import { useAppStore } from '../src/store';
-import { conversationRepository, personaRepository } from '../src/data/repositories';
 
 export const useConversationManager = (userId: string | null) => {
-    const conversations = useAppStore((state) => state.threads) as Conversation[];
-    const personas = useAppStore((state) => state.personas) as Persona[];
-    const currentConversationId = useAppStore((state) => state.activeThreadId);
-    const isLoading = useAppStore((state) => state.isConversationLoading);
-    const setConversations = useAppStore((state) => state.setThreads);
-    const setPersonas = useAppStore((state) => state.setPersonas);
-    const setCurrentConversationId = useAppStore((state) => state.setActiveThreadId);
-    const setConversationLoading = useAppStore((state) => state.setConversationLoading);
+    const [conversations, setConversations] = useState<Conversation[]>([]);
+    const [personas, setPersonas] = useState<Persona[]>([]);
+    const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
+    const [isLoading, setIsLoading] = useState(false);
 
     const refreshConversations = useCallback(async () => {
         if (!userId) return;
         try {
-            const data = await conversationRepository.listByUser(userId);
-            setConversations(data);
+            const { data, error } = await supabase
+                .from('conversations')
+                .select(`
+          *,
+          persona:personas(*)
+        `)
+                .eq('user_id', userId)
+                .order('last_message_at', { ascending: false });
+
+            if (error) throw error;
+            setConversations(data || []);
         } catch (error) {
             console.error('Error fetching conversations:', error);
         }
@@ -28,8 +31,23 @@ export const useConversationManager = (userId: string | null) => {
     const fetchPersonas = useCallback(async () => {
         if (!userId) return;
         try {
-            const data = await personaRepository.listByUserOrGlobal(userId);
-            setPersonas(data);
+            const { data, error } = await supabase
+                .from('personas')
+                .select('*')
+                .or(`is_global.eq.true,user_id.eq.${userId}`)
+                .order('created_at', { ascending: false });
+
+            if (error) {
+                console.error('[ConversationManager] Error fetching personas:', error);
+                throw error;
+            }
+
+            // Filter active global personas client-side
+            const filteredData = (data || []).filter(p =>
+                p.user_id === userId || (p.is_global && p.is_active !== false)
+            );
+
+            setPersonas(filteredData);
         } catch (error) {
             console.error('Error fetching personas:', error);
         }
@@ -38,13 +56,13 @@ export const useConversationManager = (userId: string | null) => {
     // Initial Load
     useEffect(() => {
         if (userId) {
-            setConversationLoading(true);
-            Promise.all([refreshConversations(), fetchPersonas()]).finally(() => setConversationLoading(false));
+            setIsLoading(true);
+            Promise.all([refreshConversations(), fetchPersonas()]).finally(() => setIsLoading(false));
         } else {
             setConversations([]);
             setPersonas([]);
         }
-    }, [userId, refreshConversations, fetchPersonas, setConversations, setPersonas, setConversationLoading]);
+    }, [userId, refreshConversations, fetchPersonas]);
 
     // Realtime Subscriptions
     useEffect(() => {
@@ -129,19 +147,30 @@ export const useConversationManager = (userId: string | null) => {
             }
 
             // Create new conversation in database
-            let newConversation: { id: string };
-            try {
-                newConversation = await conversationRepository.createConversation({
-                    userId,
-                    personaId
-                });
-            } catch (error: any) {
+            const { data: newConversation, error } = await supabase
+                .from('conversations')
+                .insert({
+                    user_id: userId,
+                    persona_id: personaId,
+                    created_at: new Date().toISOString(),
+                    // updated_at omitted to rely on DB default/trigger and avoid schema cache errors
+                    last_message_at: new Date().toISOString(),
+                    last_message_text: null,
+                    unread_count: 0,
+                    is_pinned: false,
+                    is_muted: false,
+                    is_archived: false
+                })
+                .select('id, user_id, persona_id, created_at') // Explicit select to avoid PGRST204 on wildcards
+                .single();
+
+            if (error) {
                 console.error('[ConversationManager] Failed to create conversation:', error);
 
                 // FIX: Handle Foreign Key Violation (Persona Deleted)
                 if (error.code === '23503') {
                     // 1. Optimistically remove from UI immediately
-                    setPersonas(personas.filter(p => p.id !== personaId));
+                    setPersonas(prev => prev.filter(p => p.id !== personaId));
 
                     // 2. Alert user
                     alert("This Persona no longer exists in the database. The list has been refreshed.");
@@ -156,18 +185,24 @@ export const useConversationManager = (userId: string | null) => {
             }
 
             // Create corresponding chat record for messages
-            try {
-                await conversationRepository.createChat({
+            const { error: chatError } = await supabase
+                .from('chats')
+                .insert({
                     id: newConversation.id,
-                    userId,
-                    personaId,
+                    session_id: newConversation.id,
+                    user_id: userId,
+                    persona_id: personaId,
                     title: `Chat with ${personas.find(p => p.id === personaId)?.name || 'Persona'}`,
-                    metadata: initialContext || {}
+                    messages: [],
+                    metadata: initialContext || {}, // Store context in chats table
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString()
                 });
-            } catch (chatError) {
+
+            if (chatError) {
                 console.error('[ConversationManager] Failed to create chat record:', chatError);
                 // Rollback conversation creation if chat part fails
-                await conversationRepository.deleteConversation(newConversation.id);
+                await supabase.from('conversations').delete().eq('id', newConversation.id);
                 return undefined;
             }
 
@@ -193,10 +228,8 @@ export const useConversationManager = (userId: string | null) => {
         return selectPersona(personaId, 'fresh');
     }, [selectPersona]);
 
-    const sortedConversations = useMemo(() => conversations, [conversations]);
-
     return {
-        conversations: sortedConversations,
+        conversations,
         personas,
         currentConversationId,
         setCurrentConversationId,

@@ -4,11 +4,10 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { Message, Memory, MemoryType } from '../types';
 import { createMemory } from '../services/memoryService';
 import { modelManager } from '../services/modelManager';
-import { resolveGeminiApiKey } from '../lib/env';
 
 // Safe lazy initialization
 const getAiClient = () => {
-    const apiKey = resolveGeminiApiKey();
+    const apiKey = (typeof process !== 'undefined' && process.env) ? process.env.API_KEY : '';
     return new GoogleGenAI({ apiKey: apiKey || '' });
 };
 

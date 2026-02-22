@@ -8,13 +8,9 @@
 
 import { GoogleGenAI } from "@google/genai";
 import { supabase } from "../lib/supabase";
-import { resolveGeminiApiKey } from "../lib/env";
 import { Message } from "../types";
 import { v4 as uuidv4 } from "uuid";
 import { modelManager } from "./modelManager";
-
-const supabaseDb = supabase;
-
 
 // ============================================
 // TYPES
@@ -50,7 +46,7 @@ const CHECKPOINT_INTERVAL = 50; // Create checkpoint every 50 messages
 const RECENT_MESSAGES_BUFFER = 15; // Keep last 15 messages verbatim
 
 const getAiClient = () => {
-    const apiKey = resolveGeminiApiKey();
+    const apiKey = (typeof process !== 'undefined' && process.env) ? process.env.API_KEY : '';
     return new GoogleGenAI({ apiKey: apiKey || '' });
 };
 
@@ -73,7 +69,7 @@ export function shouldCreateCheckpoint(
  * Get the last checkpoint end index for a chat
  */
 export async function getLastCheckpointEnd(chatId: string): Promise<number> {
-    const { data } = await supabaseDb
+    const { data } = await supabase
         .from('session_checkpoints')
         .select('message_range_end')
         .eq('chat_id', chatId)
@@ -156,7 +152,7 @@ Return JSON only:
         };
 
         // Save to database
-        await supabaseDb.from('session_checkpoints').insert({
+        await supabase.from('session_checkpoints').insert({
             id: checkpoint.id,
             chat_id: checkpoint.chatId,
             message_range_start: checkpoint.messageRangeStart,
@@ -182,7 +178,7 @@ Return JSON only:
  * Get all checkpoints for a chat
  */
 export async function getCheckpoints(chatId: string): Promise<SessionCheckpoint[]> {
-    const { data, error } = await supabaseDb
+    const { data, error } = await supabase
         .from('session_checkpoints')
         .select('*')
         .eq('chat_id', chatId)
@@ -288,7 +284,7 @@ export async function getRelationshipState(
     userId: string,
     personaId: string
 ): Promise<RelationshipState | null> {
-    const { data, error } = await supabaseDb
+    const { data, error } = await supabase
         .from('relationship_states')
         .select('*')
         .eq('user_id', userId)
@@ -331,7 +327,7 @@ export async function updateRelationshipState(
         last_updated: new Date().toISOString()
     };
 
-    await supabaseDb.from('relationship_states').upsert(newState, {
+    await supabase.from('relationship_states').upsert(newState, {
         onConflict: 'user_id,persona_id'
     });
 }

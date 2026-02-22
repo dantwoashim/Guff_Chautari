@@ -1,6 +1,5 @@
 
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
-import { resolveGeminiApiKey } from '../../lib/env';
 
 export interface ConnectionCallbacks {
   onOpen: () => void;
@@ -22,7 +21,7 @@ export class GeminiLiveSession {
   }
 
   async connect() {
-    const apiKey = resolveGeminiApiKey();
+    const apiKey = (typeof process !== 'undefined' && process.env) ? process.env.API_KEY : '';
     const ai = new GoogleGenAI({ apiKey: apiKey || '' });
     
     try {

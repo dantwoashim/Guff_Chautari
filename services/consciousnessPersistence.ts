@@ -1,8 +1,6 @@
 
 import { supabase } from '../lib/supabase';
 
-const supabaseDb = supabase;
-
 export const saveConsciousnessState = async (
   userId: string,
   sessionId: string,
@@ -14,7 +12,7 @@ export const saveConsciousnessState = async (
     currentDay?: any;
   }
 ) => {
-  const { error } = await supabaseDb
+  const { error } = await supabase
     .from('persona_consciousness')
     .upsert({
       user_id: userId,
@@ -31,7 +29,7 @@ export const saveConsciousnessState = async (
 };
 
 export const loadConsciousnessState = async (userId: string, sessionId: string) => {
-  const { data } = await supabaseDb
+  const { data } = await supabase
     .from('persona_consciousness')
     .select('*')
     .eq('user_id', userId)

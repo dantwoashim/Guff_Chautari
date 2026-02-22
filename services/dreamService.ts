@@ -2,7 +2,6 @@
 import { GoogleGenAI, Modality } from "@google/genai";
 import { supabase } from "../lib/supabase";
 import { 
-
   Dream, 
   DreamArtifact, 
   Message, 
@@ -13,13 +12,10 @@ import {
 import { createMemory } from "./memoryService";
 import { v4 as uuidv4 } from 'uuid';
 import { modelManager } from "./modelManager";
-import { resolveGeminiApiKey } from "../lib/env";
-
-const supabaseDb = supabase;
 
 // Safe lazy initialization
 const getAiClient = () => {
-    const apiKey = resolveGeminiApiKey();
+    const apiKey = (typeof process !== 'undefined' && process.env) ? process.env.API_KEY : '';
     return new GoogleGenAI({ apiKey: apiKey || '' });
 };
 
@@ -68,7 +64,7 @@ class DreamEngine {
   private async triggerDreamSequence(): Promise<void> {
     if (!this.userId || this.isQuietHours()) return;
     
-    const { data: recentChats } = await supabaseDb
+    const { data: recentChats } = await supabase
       .from('chats')
       .select('messages, created_at')
       .eq('user_id', this.userId)
@@ -81,7 +77,7 @@ class DreamEngine {
 
     this.isDreamingState = true;
     
-    const { data: memories } = await supabaseDb
+    const { data: memories } = await supabase
       .from('memories')
       .select('*')
       .eq('user_id', this.userId)
@@ -303,7 +299,7 @@ Return JSON:
   }
 
   private async saveDream(dream: Dream): Promise<void> {
-    const { error } = await supabaseDb.from('dreams').insert({
+    const { error } = await supabase.from('dreams').insert({
       id: dream.id,
       user_id: dream.user_id,
       themes: dream.themes,
@@ -326,7 +322,7 @@ Return JSON:
   }
 
   public async getDreamGallery(userId: string, limit: number = 20): Promise<Dream[]> {
-    const { data, error } = await supabaseDb
+    const { data, error } = await supabase
       .from('dreams')
       .select('*')
       .eq('user_id', userId)
@@ -347,7 +343,7 @@ Return JSON:
   }
 
   public async deleteDream(dreamId: string): Promise<void> {
-    await supabaseDb.from('dreams').delete().eq('id', dreamId);
+    await supabase.from('dreams').delete().eq('id', dreamId);
   }
 
   private isQuietHours(): boolean {
